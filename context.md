@@ -26,6 +26,22 @@
 > pronunciation, especially ق, plus exaggerated melisma) and showed the acoustic
 > LoRA is close to a no-op. **Read §14 before doing anything — it changes the
 > priorities.** §1, §8 and §10 were updated to match.
+>
+> **Session 5 (investigation only, no training run):** compared the ComfyUI
+> generation path against the sibling repo's raw-inference script
+> (`akbargherbal/fine_tuning_ai_music_lora`) that the user confirms did **not**
+> have the ق/ح/خ pronunciation problem. Found a concrete, previously-undocumented
+> gap: **`cfg_scale` (text-guidance scale) has no path into the
+> `YuE2GenerateMusic` node** — the underlying `generate_music()` function accepts
+> it, but the node never wires it, so every ComfyUI generation so far ran on
+> whatever internal default applies when it's left `None`, not the `1.2` the
+> known-good raw-inference test used. Also: **tashkeel is ruled out** by the user
+> directly (works fine with full diacritics), and the **Western-minor-key bias
+> (`K:Fm` instead of a maqam) is confirmed pre-existing in the base model**, not a
+> fine-tuning regression — the sibling repo's own README documented the same bias
+> "across every generation mode tested," before any LoRA work existed. **Read
+> §15 before doing anything — it supersedes §14's "what is still unknown" list
+> and gives a cheap, no-training next test.** §10 was updated to match.
 
 ## 1. The goal
 
@@ -447,21 +463,33 @@ failure mode and doesn't false-positive on the clean case.
 ## 10. Suggested first steps for next session
 
 Session 4 ran the first real acoustic training and a full generation test that the
-user rejected. **Read §14 first.** New priorities:
+user rejected. Session 5 diffed the pipeline against the known-good baseline
+and found a concrete lead. **Read §15 first** (it supersedes point 1 below in
+its original form). New priorities:
 
-1. **Diagnose the pronunciation regression — top priority.** Reproduce the
-   "known-good" base YuE2 render the user refers to (suspected:
-   `akbargherbal/fine_tuning_ai_music_lora`, raw inference) and diff the pipeline
-   against ours: lyrics text (tashkeel?), style-string format, planner params
-   (temperature/top_p), mode/ABC. The output must be at least as good as the base
-   model, which the user says did **not** have the ق problem.
-2. **If acoustic is retried, fix the conditioning mismatch:** `--conditioning
-   inference_like`, `--rank 32`, 10k–30k steps, `--save-every ~1000`, in tmux with
-   the GCS backup running, and A/B rendered partials (audio, not loss). But note
-   this cannot fix pronunciation.
-3. **The planner LoRA / ABC remains the real lever** for maqam and composition.
-4. `status`-field check (§5) and `--max-per-song` capping — still open.
-5. Corpus drift note (unchanged): `verify_dataset.py --dataset-root ...` detects
+1. **Test the `cfg_scale` fix — top priority, cheap, no training.** §15 found
+   that `YuE2GenerateMusic` never wires `cfg_scale` through to the underlying
+   sampler, unlike the known-good baseline's explicit `--cfg 1.2`. Patch the
+   node (or call `generate_music()`/`generate_abc()` directly) to set
+   `cfg_scale=1.2`, also set `max_duration=400` (per the user's real 6-minute
+   ceiling, not the 214s that caused §14's 3:34 cut), and re-render the same
+   held-out Hijaz poem. **Do not retrain the acoustic LoRA to test this** — it
+   isn't implicated (§14: near-no-op; §15: the gap applies with the LoRA off
+   too).
+2. **If `cfg_scale=1.2` doesn't fully fix it**, work down §15's revised list:
+   style-caption wording, then planner sampling params — in that order.
+   Tashkeel and the Western-key/K:Fm bias are **closed**, not open (§15):
+   tashkeel is ruled out by the user directly, and the Western-key bias is
+   confirmed pre-existing in the base model itself, predating any fine-tuning.
+3. **The planner LoRA / ABC remains the real lever** for maqam and composition,
+   independent of how the `cfg_scale` test turns out.
+4. If acoustic training is ever retried anyway (e.g. once `cfg_scale` is fixed
+   and a real style-transfer signal is worth chasing): fix the conditioning
+   mismatch — `--conditioning inference_like`, `--rank 32`, 10k–30k steps,
+   `--save-every ~1000`, in tmux with the GCS backup running, A/B rendered
+   partials (audio, not loss).
+5. `status`-field check (§5) and `--max-per-song` capping — still open.
+6. Corpus drift note (unchanged): `verify_dataset.py --dataset-root ...` detects
    it; re-run before trusting the §5 numbers.
 
 ## 11. Session 4 — setup done, dry run passed, first run staged
@@ -688,22 +716,134 @@ and unlike the shortlisted Suno tracks). This is a **regression relative to the
 base model** and is not acceptable. Any next attempt is judged against base-model
 pronunciation parity, not against the loss curve.
 
-### What is still unknown — start here next session
-What exactly was the earlier base-model test that pronounced ق correctly?
-Suspected `akbargherbal/fine_tuning_ai_music_lora` (raw YuE2 inference). Without
-its exact lyrics/style formatting and sampler settings we cannot diff the
-pipelines. Candidate culprits, most likely first:
-1. **Tashkeel.** Our `.lyrics.txt` keeps full harakat; a combining-mark-heavy
-   input can wreck phonemization. Their earlier test may have used plain Arabic.
-2. **Style format.** Ours is a labelled multi-line block whose `vocals:` line says
-   *"melismatic runs … melismatic phrasing"* — a plausible cause of the exagger-
-   ated melisma, and possibly of stressed articulation. The stock workflow uses a
-   plain comma-separated tag line.
-3. **Planner sampling params** — defaults `temperature 1.0 / top_p 0.95 /
-   top_k 100 / repetition_penalty 1.2`.
-4. **The ABC** being Western (K:Fm), i.e. the planner/ABC gap.
+### What is still unknown — superseded, see §15
+This section originally asked "what was the earlier base-model test that
+pronounced ق correctly, and how does its pipeline differ from ours?" **That has
+now been answered: it's `akbargherbal/fine_tuning_ai_music_lora`'s
+`yue2_generate.py`, confirmed by the user as the ق/ح/خ-clean baseline, and its
+pipeline has been diffed against ours.** Of the four candidate culprits listed
+here originally:
+1. ~~Tashkeel~~ — **ruled out**, confirmed by the user (full harakat, not a
+   problem for this model).
+2. Style format ("melismatic runs…") — **still open**, see §15.
+3. Planner sampling params — **still open**, see §15.
+4. ~~The ABC being Western (K:Fm)~~ — **confirmed pre-existing in the base
+   model, not a fine-tuning regression** — see §15.
+
+A fifth culprit neither this list nor the earlier session considered — a
+missing `cfg_scale` wire in the generation node — is now the **leading
+hypothesis**. See §15 for the finding and the next test.
 
 ### Runtime at session end (ephemeral — gone with the VM)
 - ComfyUI server **PID 81132** (`127.0.0.1:8188`), holding ~7.5 GB VRAM.
 - `backup_to_gcp.py --include-cache` loop **PID 64625**.
 - Both stop when the Colab runtime ends; nothing needs cleaning up.
+
+## 15. Session 5 — pipeline diff against the known-good baseline (no training run)
+
+This session ran **no training and no generation** — it's a read-only diff of
+two codebases, done outside the Colab VM against both this repo and
+`akbargherbal/fine_tuning_ai_music_lora` (cloned fresh for comparison). It
+exists to stop the next session from re-litigating "did the LoRA cause the ق
+regression" from scratch, or spending a GPU session re-training the acoustic
+LoRA to test a hypothesis this diff already rules out.
+
+### User-confirmed facts (treat as settled)
+- **Tashkeel is not the cause.** Full harakat works fine on this model;
+  §14 point 1 is closed.
+- **Pronunciation was correct before any of this project's fine-tuning
+  existed** — the user directly recalls no ق/ح/خ mistakes when they first
+  tried base YuE2, prior to any LoRA work.
+- **6 minutes is the user's real ceiling for song length**, i.e.
+  `max_duration` should be set to **~400s** (comfortably above the corpus's
+  369.7s max), not the 214s used in §14's test — the 3:34 hard cut in §14 is
+  fully explained by that one number and needs no further diagnosis.
+
+### The baseline pipeline, read directly from the sibling repo
+`akbargherbal/fine_tuning_ai_music_lora/yue2_generate.py` is the script the
+"clean" pronunciation almost certainly came from — confirmed by the user as
+matching their memory of that earlier test. It does **not** use ComfyUI at
+all: it calls the `yue2` pip package's `YuE2Pipeline` directly, one call doing
+both composition and music generation:
+```python
+config = GenerationConfig(ode_steps=ode_steps)
+pipe = YuE2Pipeline.from_pretrained(args.model, vae=args.vae, device="cuda", generation_config=config)
+song = pipe(style=style, lyrics=lyrics, cot=args.cot, seed=args.seed, cfg_scale=args.cfg)
+```
+Defaults: `--cot full`, `--cfg 1.2` (documented in its own README as
+"text-guidance scale... prompt adherence"), `--quality standard` →
+`ode_steps=32`. Style/lyrics are the **raw manifest fields, sent verbatim** —
+full Suno control syntax, full tashkeel, no re-rendering through
+`maqam_prompt_generator.build_prompt()` or `clean_lyrics()`.
+
+Its own README/findings (independent of this repo, predates all LoRA work)
+also state: **"The model consistently defaults to Western minor keys
+regardless of the maqam requested in the style text — this held across every
+generation mode tested"** — i.e. **the K:Fm-instead-of-Hijaz result in §14 is
+a known, pre-existing base-model limitation, not something the fine-tuning
+caused or worsened.** Closes §14 point 4 as "not a regression" rather than
+"unresolved."
+
+### The finding: `cfg_scale` has no path into `YuE2GenerateMusic`
+Traced through `speedyrulz/ComfyUI-YuE2-Trainer` source (`yue2_trainer/planner.py`):
+```python
+def generate_music(clip, style, lyrics, abc, mode, seed, max_seconds,
+                    sampling=None, cfg_scale: Optional[float] = None):
+    ...
+    if cfg_scale is not None:
+        tokens["cfg_scale"] = cfg_scale
+    ...
+    ids, truncated = te._generate(..., cfg_scale=tokens["cfg_scale"], ...)
+```
+The plumbing exists — but grepping `nodes.py` for `cfg_scale` returns **zero
+matches**. The `YuE2GenerateMusic` node (used in §14's test and in
+`example_workflows/yue2_generate_with_lora_api.json`) exposes `style, lyrics,
+seed, mode, max_duration, temperature, top_p, top_k, repetition_penalty` —
+**no `cfg_scale` input**. `generate_abc()` (the composition/ABC stage) has no
+`cfg_scale` parameter at all, at any layer — no hook, unlike the music stage.
+
+**Consequence:** every ComfyUI generation run in this project so far —
+§14's A/B test included — ran with `cfg_scale=None`, falling through to
+whatever the underlying `clip.tokenize()`/text-encoder default is when the
+caller never sets it. That default has **not been verified** and is not
+known to be `1.2`. This is a plausible, mechanistic explanation for both
+symptoms at once:
+- Weaker text-guidance → the model tracks the literal Arabic lyrics less
+  closely → plausible source of mispronunciation.
+- Same mechanism → plausible source of "too melismatic to an artificial
+  level" / "doesn't sound like genuine Arabic singing" (§14's user verdict) —
+  less anchored to the actual input, more free-running.
+
+This is a **generation-node wiring gap**, unrelated to the acoustic LoRA
+weights themselves (already shown near-no-op in §14, waveform corr.
+0.946–0.998) and unrelated to training in general — it would apply identically
+with the LoRA disabled.
+
+### Recommended next test (cheap — no training required)
+1. Patch `YuE2GenerateMusic` to accept and forward `cfg_scale` to
+   `generate_music()` (the function signature already supports it — this is a
+   node-input change, not a training-code change), or call
+   `generate_music()`/`generate_abc()` directly from a standalone script,
+   bypassing the node.
+2. Set `cfg_scale=1.2` (matching the known-good baseline) and `max_duration=400`
+   (per the 6-minute ceiling above).
+3. Re-render the same held-out poem used in §14
+   (`hijaz_0038_01-retake_take01`) and do the same base-vs-LoRA A/B, listening
+   specifically for ق/ح/خ and for "genuineness," not just loss numbers.
+4. **Do not re-run acoustic-LoRA training to test this.** The LoRA is not
+   implicated; retraining would burn a session without confirming or denying
+   the `cfg_scale` hypothesis.
+
+### If `cfg_scale=1.2` does not fully resolve it
+Re-open, in this order (updated from §14's original list, tashkeel and the
+Western-key bias now removed as closed):
+1. Style caption wording — the `vocals:` line's *"melismatic runs …
+   melismatic phrasing"* vs. the baseline's plain comma-tag line.
+2. Planner sampling params (`temperature`/`top_p`/`top_k`/`repetition_penalty`)
+   — note `YuE2GenerateABC` and `YuE2GenerateMusic` use **different** defaults
+   from each other (ABC: `0.7/0.9/30/1.005`; Music: `1.0/0.95/100/1.2`), so any
+   comparison needs to track which node's params are being changed.
+3. The planner-LoRA/ABC work (§8) remains the real lever for maqam control
+   regardless of how the `cfg_scale` test turns out — that's a separate,
+   already-understood blocker (symbolic-score generation), not something this
+   session's finding changes.
