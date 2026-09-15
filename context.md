@@ -20,9 +20,12 @@
 > `git log` before believing anything this file says about what's
 > committed.
 >
-> **Session 4 update:** the backend is installed and a dry run has passed; the
-> operational state, the checkpoint/resume/observability plan, and the GCS
-> backup script are in §11–13. §1, §7, §8, §9 and §10 were updated to match.
+> **Session 4 final update:** the backend is installed, a dry run passed, then the
+> first real acoustic run (1500 steps) completed and generation was tested. That
+> test exposed a **quality problem the user considers a regression** (Arabic
+> pronunciation, especially ق, plus exaggerated melisma) and showed the acoustic
+> LoRA is close to a no-op. **Read §14 before doing anything — it changes the
+> priorities.** §1, §8 and §10 were updated to match.
 
 ## 1. The goal
 
@@ -32,12 +35,14 @@ specific "winning" style: symphonic cinematic orchestral ballad / heavy rock,
 grand-concert-hall acoustics, deep male Arabic vocals, classical Arabic
 poetry as lyrics, in one of four Arabic maqams (Hijaz, Nahawand, Ajam, Kurd).
 
-**Dataset preparation is complete and verified** (§5–6). The backend is now
-chosen *and installed* — `speedyrulz/ComfyUI-YuE2-Trainer` — and a 0-step acoustic
-"dry run" (scan → VAE-encode → LoRA build → eval → save) has passed on the real
-dataset. **No real training has been run yet**; the next action is the first
-actual acoustic run. Session 4 operational state is §11, the
-checkpoint/resume/observability plan is §12, and the GCS backup script is §13.
+**Dataset preparation is complete and verified** (§5–6). The backend is installed
+— `speedyrulz/ComfyUI-YuE2-Trainer` — and a **first real acoustic run** (1500
+steps, 7.5 min) completed, followed by a full generation test. **Outcome: the user
+is not satisfied.** The acoustic LoRA barely changed the render, the base planner
+composed in a Western key (not a maqam), and the output has Arabic pronunciation
+problems (notably ق) that the user did **not** hear from the base model when they
+tested it, nor in the source Suno tracks. See **§14**. Operational detail: §11
+setup/dry run, §12 checkpoint/resume/observability, §13 GCS backup.
 
 ## 2. Background on the tools involved (verified via web search, Sep 2026)
 
@@ -402,14 +407,14 @@ failure mode and doesn't false-positive on the clean case.
     base render, "the same song, re-recorded"). **Maqam control requires
     the planner LoRA.**
   - So both are wanted eventually. The order is forced by what's blocked:
-    **acoustic is unblocked right now** (dataset built and verified 0/0,
-    sidecar naming already matches the trainer's convention, uniform 48kHz
-    stereo, random-crop handles our 370s max — plausibly a direct
-    drop-in), while **planner is blocked on ABC scores** (next point).
-  - **Recommended order: acoustic first**, which also validates the whole
-    pipeline end-to-end on real data before sinking effort into
-    transcription. **Session 4: effectively ratified** — the user proceeded to
-    the acoustic dry run and is set to launch the real acoustic run (§11).
+    acoustic was unblocked, planner is blocked on ABC scores (next point).
+  - **Session 4 result: acoustic-first was executed and is a dead end for the
+    real goal.** A 1500-step acoustic run (§14) produced a near-no-op — LoRA-vs-
+    base render `waveform corr 0.946`, `MFCC 0.998` — and it structurally cannot
+    change maqam or pronunciation. The base planner also scored the held-out
+    poem in **K:Fm (Western)**, not Hijaz. **The planner LoRA is the real target,
+    not a later step; the pronunciation problem is upstream in the planner's
+    semantic tokens.**
 - **Symbolic score / ABC transcription** for the planner LoRA path.
   SheetSage2's fixed 300s window is a mismatch for some of our tracks
   (median 253s, max 370s) and its fit for melismatic Arabic vocal lines is
@@ -417,9 +422,10 @@ failure mode and doesn't false-positive on the clean case.
   decision if the planner LoRA is wanted, not an optional side-quest.
 - **`--max-per-song` capping** — leaning no-cap, not finalized.
 - **`status` field investigation** — see §5, quick check not yet run.
-- **No real LoRA training has been run yet.** Session 4 got as far as a
-  successful 0-step `--dry-run` on the real dataset (scan/encode/eval/save all
-  work); see §11. Acoustic-first is now effectively ratified.
+- **First real LoRA training HAS now been run (session 4)** — 1500 acoustic steps
+  in 7.5 min, held-out loss 1.0510 → 1.0078 (-4%, plateaued by ~250). It is a
+  **smoke test, not a fine-tune** (it saw <1 epoch; 1500 × 30 s ≈ 12.5 h vs an
+  18 h corpus), and its render changed almost nothing. See §14.
 
 ## 9. User context
 
@@ -440,31 +446,23 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 10. Suggested first steps for next session
 
-Session 4 did the previous steps 1–2 up to a passing dry run. What's left:
+Session 4 ran the first real acoustic training and a full generation test that the
+user rejected. **Read §14 first.** New priorities:
 
-1. **Run the first real acoustic training** (§11): the exact command is there;
-   the dry run already proved the data scan, VAE encode, eval and save paths.
-   Include `--save-every 50`. This will be the first real LoRA training of any
-   kind in this project.
-2. **Protect and watch it** — checkpoints/resume per §12, with
-   `backup_to_gcp.py` running in a second terminal per §13.
-3. **Evaluate the acoustic LoRA honestly.** Expect "same composition, our
-   production" — per §2 that's the *designed* behaviour, not a failure.
-   Judging it by whether maqams changed would be judging it by the thing it
-   structurally cannot do.
-4. **ABC score generation for the planner LoRA** — still the one genuinely
-   unexplored blocker. Options: SheetSage2 (300s window vs. our 253s
-   median / 370s max), the `t8star/YuE2-Comfy` bundle (§2, unverified),
-   or hand-authored scores. Don't assume an answer; nobody has tested any
-   of these against melismatic Arabic vocal lines.
-5. **Run the `status`-field check from §5** — low effort, resolves a real
-   ambiguity in the filtering logic, independent of everything above. Can
-   be done any time the user is at the corpus machine.
-6. **`--max-per-song` capping** — still leaning no-cap, still not decided.
-
-Note the corpus can drift between sessions (the user deletes tracks by ear).
-`verify_dataset.py --dataset-root ...` detects this; re-run it before
-trusting the §5 numbers.
+1. **Diagnose the pronunciation regression — top priority.** Reproduce the
+   "known-good" base YuE2 render the user refers to (suspected:
+   `akbargherbal/fine_tuning_ai_music_lora`, raw inference) and diff the pipeline
+   against ours: lyrics text (tashkeel?), style-string format, planner params
+   (temperature/top_p), mode/ABC. The output must be at least as good as the base
+   model, which the user says did **not** have the ق problem.
+2. **If acoustic is retried, fix the conditioning mismatch:** `--conditioning
+   inference_like`, `--rank 32`, 10k–30k steps, `--save-every ~1000`, in tmux with
+   the GCS backup running, and A/B rendered partials (audio, not loss). But note
+   this cannot fix pronunciation.
+3. **The planner LoRA / ABC remains the real lever** for maqam and composition.
+4. `status`-field check (§5) and `--max-per-song` capping — still open.
+5. Corpus drift note (unchanged): `verify_dataset.py --dataset-root ...` detects
+   it; re-run before trusting the §5 numbers.
 
 ## 11. Session 4 — setup done, dry run passed, first run staged
 
@@ -630,3 +628,82 @@ Auth is `gh` with a stored user token; push uses
 `git -c credential.helper='!gh auth git-credential'` (no git-config change).
 `ComfyUI/` and `agent_notes/` remain untracked/volatile candidates for
 `.gitignore` if the churn becomes annoying.
+
+## 14. Session 4 (cont.) — first real run + generation test — the setback
+
+This section exists because the user ended the session **dissatisfied**: "This is
+not like I imagined things… at least we should have things like in the base model
+which didn't have pronunciation problem (neither the training data which were
+shortlisted from the best Suno tracks)." Treat the following as the new baseline
+of truth, and the acceptance bar as: **output no worse than the base model, with
+its correct classical-Fusha pronunciation.**
+
+### The run
+```bash
+train_cli.py acoustic --comfy-root .../ComfyUI --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset --eval-holdout 5 --seed 2002 \
+  --segment-seconds 30 --steps 1500 --save-every 50 --out maqam_acoustic_v1
+```
+- **1500 steps in 450 s (~0.3 s/step)**, 251 items, 112 modules, rank 16, 14.68 M
+  trainable params. Held-out loss **1.0510 → 1.0078 (-4.1%)**, plateaued by ~250;
+  train loss min 0.7369. 29 partials + final; final LoRA 28 MB, `.resume` ~117 MB.
+- **It is a smoke test, not a fine-tune:** 1500 × 30 s ≈ 12.5 h of audio vs an
+  18 h corpus = **<1 epoch**. The 1500 figure came from the trainer README's demo,
+  not from a production budget — that framing was wrong.
+
+### The generation test (headless ComfyUI)
+- Server `python ComfyUI/main.py` on `127.0.0.1:8188`; stock workflow
+  `example_workflows/yue2_generate_with_lora_api.json` (acoustic LoRA on the MODEL
+  path; planner/clip path left at base). Held-out poem
+  **`hijaz_0038_01-retake_take01`** (Imru' al-Qais, Maqam Hijaz), fed the dataset's
+  `.style.txt` + cleaned `.lyrics.txt`.
+- The LoRA attaches correctly (`112 patches attached`; the 336 `lora key not
+  loaded` warnings are node 17's clip path and harmless).
+- A/B pairs, same seed, `strength_model` 1.0 vs 0.0:
+  - **90 s**: `max_abc_tokens=2048`, `max_duration=90` → both budgets hit,
+    truncation. `waveform 0.963 · MFCC 0.999`.
+  - **214 s (full)**: `max_abc_tokens=8192` (ABC finished on its own),
+    `max_duration=214` → music budget hit, so a **hard cut at 3:34** with no end
+    token. `waveform 0.946 · chroma 0.996 · MFCC 0.998 · centroid 2131 vs 2111 Hz`.
+- Files: `/content/ab_lora_vs_base/{01_base_no_lora,02_lora_strength1.0}.flac`;
+  90 s pair in `ComfyUI/output/yue2/`; the two FLACs + three workflow JSONs were
+  copied to `gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/session4_tests/`
+  (the VM dies with the session, so that is the only durable copy).
+
+### Two hard findings
+1. **The acoustic LoRA is a near-no-op at this scale** (`waveform 0.946`,
+   `MFCC 0.998`). It is not the style transfer the user is after, and no amount of
+   acoustic training will touch pronunciation or maqam.
+2. **Pronunciation is decided upstream, by the planner's semantic tokens.** The
+   base and LoRA renders of a pair are fed the **identical** token stream (server
+   log: only **2 ABC + 2 music sampling passes for 4 runs**; the base runs reused
+   the LoRA runs' cache), so the acoustic LoRA can neither cause nor fix the ق
+   problem. The base planner also produced **K:Fm** (F minor — Western harmony),
+   not Hijaz.
+
+### The user's verdict / acceptance criterion
+The render is "too melismatic to artificial level", with pronunciation problems
+(letter **ق** not rendered as classical Fusha, unlike the base model they tested
+and unlike the shortlisted Suno tracks). This is a **regression relative to the
+base model** and is not acceptable. Any next attempt is judged against base-model
+pronunciation parity, not against the loss curve.
+
+### What is still unknown — start here next session
+What exactly was the earlier base-model test that pronounced ق correctly?
+Suspected `akbargherbal/fine_tuning_ai_music_lora` (raw YuE2 inference). Without
+its exact lyrics/style formatting and sampler settings we cannot diff the
+pipelines. Candidate culprits, most likely first:
+1. **Tashkeel.** Our `.lyrics.txt` keeps full harakat; a combining-mark-heavy
+   input can wreck phonemization. Their earlier test may have used plain Arabic.
+2. **Style format.** Ours is a labelled multi-line block whose `vocals:` line says
+   *"melismatic runs … melismatic phrasing"* — a plausible cause of the exagger-
+   ated melisma, and possibly of stressed articulation. The stock workflow uses a
+   plain comma-separated tag line.
+3. **Planner sampling params** — defaults `temperature 1.0 / top_p 0.95 /
+   top_k 100 / repetition_penalty 1.2`.
+4. **The ABC** being Western (K:Fm), i.e. the planner/ABC gap.
+
+### Runtime at session end (ephemeral — gone with the VM)
+- ComfyUI server **PID 81132** (`127.0.0.1:8188`), holding ~7.5 GB VRAM.
+- `backup_to_gcp.py --include-cache` loop **PID 64625**.
+- Both stop when the Colab runtime ends; nothing needs cleaning up.
