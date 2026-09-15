@@ -30,8 +30,13 @@ a single short fact) can stay in chat.
   first. One GPU, shared.
 
 ## Where to look before answering "what's going on"
-- Training log: `PATH_HERE`
-- Loss / checkpoint state: `PATH_HERE`
-- Dataset: `PATH_HERE`
-- Training script: `PATH_HERE`
+- Training log: `/content/logs/train.log` (the trainer command tees here;
+  bootstrap per-job logs are `/content/logs/{setup,checkpoint,comfyui,dataset}.log`).
+- Loss / checkpoint state: `/content/yue2_lora_finetuning/ComfyUI/models/loras/`
+  — `<out>.loss.json` (loss/eval curves), `<out>.safetensors` (LoRA),
+  `<out>.resume` (resume state), plus `<out>_NNNNNN.*` with `--save-every`.
+  Base model: `ComfyUI/models/checkpoints/yue2_3b_bf16.safetensors`.
+- Dataset: `/content/data/dataset/` (`train/`, `val/`, `manifest.csv`).
+- Training script: `ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py`
+  (repo root is `/content/yue2_lora_finetuning`).
 

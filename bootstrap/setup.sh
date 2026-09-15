@@ -17,6 +17,12 @@ set -e
 mkdir -p /content/logs
 source /root/.secrets.env
 
+# Anchor every ComfyUI path to the repo this script lives in, so the script
+# behaves the same whether invoked from the repo root or elsewhere.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMFY="$REPO_ROOT/ComfyUI"
+STAGING="/content/staging"
+
 echo "=== $(date) — yue2 bootstrap starting ==="
 
 # --- Fast, synchronous: credentials everything else depends on ---
@@ -38,18 +44,23 @@ start_job() {
 start_job opencode \
   bash -c 'curl -fsSL https://opencode.ai/install | bash'
 
+# Download into a staging dir, NOT into ComfyUI/. The ComfyUI clone runs in
+# parallel; if this job created ComfyUI/ first, `git clone` would either be
+# skipped by a `[ -d ComfyUI ]` guard or fail on a non-empty destination.
+# Staging keeps the two jobs from racing over the same directory.
 start_job checkpoint \
-  bash -c 'mkdir -p ComfyUI/models/checkpoints && \
-           hf download Comfy-Org/YuE2 yue2_3b_bf16.safetensors \
-             --local-dir ComfyUI/models/checkpoints'
+  bash -c 'mkdir -p "'"$STAGING"'/models" && \
+           hf download Comfy-Org/YuE2 checkpoints/yue2_3b_bf16.safetensors \
+             --local-dir "'"$STAGING"'/models"'
 
 start_job dataset \
   bash -c 'mkdir -p /content/data && \
            gsutil -m cp -r "'"$GCP_DATASET_PATH"'" /content/data'
 
 start_job comfyui \
-  bash -c 'if [ ! -d ComfyUI ]; then git clone https://github.com/comfyanonymous/ComfyUI.git; fi && \
-           cd ComfyUI && pip install -q -r requirements.txt'
+  bash -c 'if [ ! -f "'"$COMFY"'/main.py" ]; then rm -rf "'"$COMFY"'" && \
+             git clone https://github.com/comfyanonymous/ComfyUI.git "'"$COMFY"'"; fi && \
+           cd "'"$COMFY"'" && pip install -q -r requirements.txt'
 
 echo "Launched in parallel: ${names[*]}"
 echo "tail -f /content/logs/<name>.log to watch any one of these live."
@@ -64,20 +75,28 @@ for i in "${!pids[@]}"; do
   fi
 done
 
+# --- Merge the staged checkpoint into the now-cloned ComfyUI ---
+mkdir -p "$COMFY/models/checkpoints"
+if [ -f "$STAGING/models/checkpoints/yue2_3b_bf16.safetensors" ]; then
+  mv -f "$STAGING/models/checkpoints/yue2_3b_bf16.safetensors" "$COMFY/models/checkpoints/"
+else
+  echo "[WARN] staged checkpoint not found — checkpoint job failed, see log above"
+fi
+
 # --- Trainer install: the one real dependency (needs ComfyUI/custom_nodes/) ---
 echo "Installing trainer (depended on ComfyUI job above)..."
-cd ComfyUI/custom_nodes
+mkdir -p "$COMFY/custom_nodes"
+cd "$COMFY/custom_nodes"
 if [ ! -d ComfyUI-YuE2-Trainer ]; then
   git clone https://github.com/speedyrulz/ComfyUI-YuE2-Trainer.git
 fi
 cd ComfyUI-YuE2-Trainer
 pip install -q -r requirements.txt
-cd /content
 
 # --- Verify what actually landed, don't just trust exit codes ---
 echo "=== Verifying downloads ==="
 
-ckpt="ComfyUI/models/checkpoints/yue2_3b_bf16.safetensors"
+ckpt="$COMFY/models/checkpoints/yue2_3b_bf16.safetensors"
 if [ -f "$ckpt" ]; then
   size=$(stat -c%s "$ckpt")
   if [ "$size" -lt 1000000000 ]; then
@@ -105,4 +124,4 @@ if [ "$fail" -eq 1 ]; then
   echo "=== setup.sh finished WITH FAILURES — check the [FAIL] lines above ==="
   exit 1
 fi
-echo "=== setup.sh done — dataset in /content/data, checkpoint in ComfyUI/models/checkpoints ==="
+echo "=== setup.sh done — dataset in /content/data, checkpoint in $COMFY/models/checkpoints ==="
