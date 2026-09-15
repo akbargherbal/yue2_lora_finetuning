@@ -17,41 +17,51 @@ elsewhere:
 ## Current state (one paragraph)
 
 Dataset is done and verified (256 tracks, 238 train / 18 val, poem-safe split).
-The backend (`speedyrulz/ComfyUI-YuE2-Trainer` + `yue2_3b_bf16.safetensors`) is
-installed, the community semantic-token head is wired in, and the whole corpus
-is tokenized (256/256). The first **planner LoRA** was trained for 100 steps on
-semantic tokens (`maqam_planner_v1.safetensors`, held-out eval 5.60 → 4.95,
-−11.7%, still falling; KL crept to 0.25). The first evaluation — base vs
-checkpoints 30/60/100 on a user-supplied Maqam Nahawand track — is rendered; the
-user's verdict so far is **"so-so, not good not bad"**, with full listening
-notes to come.
+The planner LoRA (`maqam_planner_v1`, 100 steps) was audited by ear: base vs
+checkpoints 30/60/100 on a Maqam Nahawand track (**resolves KI-21**).
+Pronunciation held up at every checkpoint. But **30 sounded better than 60/100**
+(more steps made it worse, consistent with KL climbing rather than leveling
+off, KI-03), and even at 30 the لحن reads as "foreign" and musicality is
+simpler than the training corpus. **Diagnosis:** the community semantic-token
+head (`tokenizer_head_joint_v4.pt`) has never been adapted to this corpus —
+it's used frozen, as shipped by Mothersuperior, and its ~16% top-1 noise
+(KI-04) plausibly washes out exactly the fine melodic detail that's missing.
+**Decision:** before any more planner training, run Mothersuperior's own
+head-calibration step (`joint.py`) on our corpus and verify by ear whether a
+calibrated head sounds less "foreign" on the same round-trip test. Full plan:
+`PLAN.md` (rewritten, session 8 — supersedes the sessions 6–7 version).
 
 ## Blocked on
 
-KI-21: the user's listening impression of the track-4 A/B. Specifically,
-whether any planner checkpoint clearly differs from `base` in composition/maqam,
-and which (if any) checkpoint sounds closest to the intended Nahawand. **This
-answer picks the next branch** — do not burn a session guessing.
+Nothing — next session has a concrete, unblocked plan (`PLAN.md`). The one
+real open question inside it: whether a calibrated head/NAR checkpoint from
+Mothersuperior's `joint.py` is even loadable by this repo's existing
+`--semantic-head` flag (`train_cli.py`). Unconfirmed; check early in the
+calibration session, not after committing to a full re-tokenize.
 
 ## Next steps (in order)
 
-1. **Collect the user's listening notes**, then branch (`docs/architecture.md` §1
-   sets the acceptance bar: base-model pronunciation parity, judged by ear):
-   - *LoRA indistinguishable from base* → extend to ≥200–300 steps with
-     `--existing-lora maqam_planner_v1_000100.safetensors` (total `--steps`) and
-    /or revisit planner hyperparameters (LR, `--abc-dropout`, `--max-tokens`);
-     watch KL (KI-03).
-   - *Differs but still "meh"* → the limiter is the acoustic half → Stage 3
-     acoustic LoRA in `--conditioning inference_like --use-semantic`
-     (`PLAN.md` §6); consider the NAR companion (`render_tokens_nar.py`, KI-05).
-   - *A checkpoint is good* → lock it; stack planner (CLIP) + acoustic (MODEL)
-     and do the final seed-matched A/B.
-2. **On a fresh Colab**, run `bootstrap/setup.sh` and confirm the `cfg_scale`
-   patch applied — it now pins ComfyUI `36da3ff7` and **hard-fails** if the
-   patch won't apply (KI-08), so a silent regression is no longer possible.
-3. **Tokenize any new material** with `--semantic-head` before training on it.
-4. **Open/low priority:** `status`-field check (KI-01), `--max-per-song`
-   (KI-02), corpus-drift re-verify (KI-07).
+1. **Run the calibration session per `PLAN.md`**: set up Mothersuperior's
+   separate toolchain (§2–3), run `prep_real.py` → `cursor_prep.py` →
+   `joint.py` on the corpus with `HOLD_TRACK` = the same Nahawand track used
+   in the 30/60/100 audition, and do a same-seed round-trip render (stock head
+   vs calibrated head) before drawing conclusions.
+2. **Branch on that listening result** (`PLAN.md` §7):
+   - *Calibrated round-trip sounds closer to the corpus, pronunciation
+     intact* → re-tokenize the full corpus with the new head and retrain the
+     planner LoRA **fresh** (not resumed — tokens changed underneath it).
+   - *No audible difference* → tokenizer wasn't the bottleneck; try Path 1
+     (SheetSage2 melody→ABC as a second, symbolic signal — `t8star/YuE2-Comfy`,
+     currently an unverified lead, `architecture.md` §5) instead of re-running
+     calibration blind.
+   - *Calibration fails to load/run* → treat as its own session; log what
+     broke in `docs/known-issues.md`.
+3. **Backup policy, now part of `AGENTS.md`:** before any run with a new
+   output path, confirm it's covered by `backup_to_gcp.py`'s `TARGETS`
+   (currently only `loras/`, `logs/`, `agent_notes/` — KI-20) and add it if
+   not, *before* the run starts.
+4. **Open/low priority, unchanged:** `status`-field check (KI-01),
+   `--max-per-song` (KI-02), corpus-drift re-verify (KI-07).
 
 ## Session hygiene
 

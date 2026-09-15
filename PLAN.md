@@ -1,226 +1,286 @@
-# PLAN — YuE2-3B Maqam Style LoRA (Colab run plan)
+# PLAN — Tokenizer head calibration (Colab run plan)
 
-> **Rewritten from scratch, session 6.** The previous `PLAN.md` was a
-> dataset-prep plan whose §0 rested on the fabricated "ai-toolkit supports
-> YuE2 (PR #1042)" claim (see `docs/architecture.md` §5) — it is superseded,
-> not amended. This file is the forward-looking plan and the **canonical home
-> for training commands**; `MANUAL.md` is canonical for generation commands.
-> Read `context.md` (current state) first; design reference and history live in
-> `docs/architecture.md` and `agent_notes/sessions/`.
+> **Rewritten from scratch, session 8.** The previous `PLAN.md` (sessions 6–7)
+> covered planner-LoRA training on the stock `tokenizer_head_joint_v4.pt` head
+> and is superseded, not amended — that work isn't wasted, see §0. Read
+> `context.md` first; this file is the canonical home for training commands
+> until superseded again.
 >
-> **License:** YuE2's weights and the community semantic-tokenizer head are
-> both **CC BY-NC 4.0 (non-commercial)**. The trained LoRA inherits that
-> constraint.
+> **License:** YuE2's weights and the community semantic-tokenizer/NAR assets
+> are all **CC BY-NC 4.0 (non-commercial)**. Anything trained here inherits
+> that constraint.
 
-## 0. Where we are
+## 0. Where we are, and why this session exists
 
-- **Dataset: done and verified.** `/content/data/dataset/` = 256 tracks (238
-  train / 18 val), uniform 48 kHz stereo MP3, 18.0 h total, poem-safe split,
-  `manifest.csv` cross-checked. `prepare_dataset.py` / `verify_dataset.py`
-  own it. No audio cleanup or segmentation is needed (`docs/architecture.md`
-  §3/§6).
-- **Backend: installed and sane.** `speedyrulz/ComfyUI-YuE2-Trainer` +
-  `yue2_3b_bf16.safetensors`. Its own tests check the training forward matches
-  ComfyUI inference (cosine 0.9999) and that LoRA keys load with zero
-  unmatched keys.
-- **One acoustic run happened and it told us something:** 1500 steps,
-  `--conditioning compact`, near-no-op (`waveform corr 0.946`). That was the
-  *wrong half* of the model in the *wrong conditioning mode*
-  (`agent_notes/sessions/session-04.md`). It is a smoke test, not a fine-tune,
-  and it is not to be repeated as-is.
-- **The missing piece is found and already integrated**
-  (`docs/architecture.md` §5, `agent_notes/sessions/session-06.md`):
-  `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`, the audio →
-  semantic-token encoder YuE2 never shipped. The trainer can run it
-  (`--semantic-head`) to write `<song>.semantic.npy` for our own recordings.
+- **Listening verdict on the track-4 A/B is in (resolves KI-21):** base vs
+  planner checkpoints 30/60/100 on `04-وصف-محاسن-الحبيبة-والجمال` (Maqam
+  Nahawand). Pronunciation held up at every checkpoint — the acceptance floor
+  is intact. But: **step 30 sounded better than 60 and 100**, and even at 30,
+  the لحن (melodic line) reads as "foreign" against the training corpus, and
+  the musicality is simpler than the reference tracks. More steps made it
+  worse, not better.
+- **Diagnosis:** KL divergence was climbing, not leveling off (0 → 0.25 by
+  step 100, KI-03) — later steps are following tokenizer noise, not
+  converging on style. And the noise itself has a specific source: the
+  community semantic-token head (`tokenizer_head_joint_v4.pt`, KI-04, ~16%
+  exact top-1 on YuE2's own songs) has **never been adapted to this corpus**.
+  It was trained on Mothersuperior's own corpus and used here frozen,
+  as-shipped. Fine, imprecise melodic detail — ornamentation, cadence shape,
+  the things that make لحن sound right rather than "vaguely Middle
+  Eastern" — is exactly what a noisy, out-of-distribution teacher would wash
+  out first. This reframes KI-04 from "accepted ceiling" to "untried fix
+  available": the model card's own workflow has an *adapt the head to your
+  audio* step (`joint.py`) that this project has never run.
+- **Goal of this session:** run that calibration step, and get a real,
+  listenable answer to *does a corpus-calibrated head sound less "foreign"
+  on the same round-trip test* — before spending any more GPU time on planner
+  LoRA training against the old, uncalibrated tokens.
+- **Not in scope today:** re-tokenizing the full corpus, retraining the
+  planner LoRA, or Stage 3 (acoustic LoRA). Those are real next-session work,
+  gated on today's verification step (§6) actually looking promising.
 
-## 1. The core correction: which half does what
+## 1. Two separate toolchains — do not conflate them
 
-| Half | LoRA | Trains | Controls |
-|---|---|---|---|
-| AR / planner | `planner` (CLIP) | next-token over `style + lyrics → ABC` and/or `→ semantic tokens` | **composition**: melody, harmony, structure, maqam — and the semantic tokens that pronunciation comes from |
-| NAR / acoustic | `acoustic` (MODEL) | flow-matching on VAE latents | render only: timbre, instrument sound, mix, production |
+This repo's existing pipeline (`speedyrulz/ComfyUI-YuE2-Trainer`,
+`train_cli.py planner --semantic-head ...`) is **not** the toolchain that
+calibrates the head. That calibration lives in Mothersuperior's own scripts
+(`scripts/prep_real.py`, `cursor_prep.py`, `joint.py`, from the
+`yue2-mothersuperior-realaudio-tokenizer-v4` HF repo), which is a separate,
+standalone codebase with its own environment expectations.
 
-**The goal of this project is a maqam + pronunciation + style change. That lives
-in the planner.** The acoustic LoRA is the "same song, re-recorded" (both
-sources agree). So: **planner first, acoustic second.** The old acoustic-first
-ordering is reversed.
+**Today's job uses only Mothersuperior's scripts.** We are not switching the
+planner trainer, not adopting their `ar_prep.py`/`ar_lora_cursor.py` planner
+LoRA pipeline, and not touching `train_cli.py`. The only thing we want out of
+today is a calibrated `tokenizer_head_*.pt` (+ its paired NAR delta) that can
+later be dropped into the existing `--semantic-head` flag — *if* it verifies
+by ear. That compatibility is unconfirmed (§6), so treat it as an open
+question, not an assumption.
 
-## 2. Why the planner was blocked, and what unblocked it
+## 2. Pre-flight
 
-YuE2 shipped with no encoder that turns a real recording into semantic tokens,
-so real songs had no teachable target on the planner's semantic path. The only
-planner route was ABC scores via SheetSage2 — a poor fit for our median-253s /
-max-370s tracks and unverified on melismatic Arabic.
+### 2.1 GPU: start on L4, per your call
 
-`Mothersuperior`'s head fixes exactly that. It is **already wired in**:
+The previous (flawed) planner run used 8–10 GB VRAM on L4 the whole time, well
+under the model card's 14–18 GB estimate for this calibration job. **Start on
+L4. Do not pre-emptively switch to A100.** Escalate only on real evidence:
 
-- Node: **YuE2 Semantic Tokens (community head)**.
-- CLI: **`--semantic-head <file>`** — predicts tokens for every song and
-  writes `<song>.semantic.npy` (skips existing sidecars unless
-  `--semantic-force`).
+- `nvidia-smi` shows VRAM genuinely maxed out and the job OOMs, or
+- the per-step timing extrapolated from the first ~20–30 steps of `joint.py`
+  puts the full 3000-step run at a wall-clock length you're not willing to
+  sit through in one Colab session.
 
-Consequence: the planner can now train on **semantic tokens with no scores at
-all** (`--semantic --no-abc`). The ABC/SheetSage2 blocker is off the critical
-path. Its accuracy is approximate (~16% exact top-1 on YuE2's own songs, ~95%
-by ear on round-trips) — treat the labels as noisy but usable.
+Check both within the first few minutes of §5 starting — don't wait until
+the end to find out.
 
-## 3. Pre-flight in Colab (bootstrap additions)
+### 2.2 Backup: confirm it's running, then extend it
 
-`bootstrap/setup.sh` must also fetch the head. Add next to the checkpoint
-download job (uses the `$COMFY` variable already defined there):
-
-```bash
-start_job tokenizer \
-  bash -c 'mkdir -p "'"$COMFY"'/models/audio_encoders" && \
-           hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 \
-             tokenizer_head_joint_v4.pt \
-             --local-dir "'"$COMFY"'/models/audio_encoders"'
-```
-
-MERT-v2-FullSong (~630 MB) can be auto-fetched via `--mert m-a-p/MERT-v2-FullSong`
-(default), or pre-downloaded to a folder and passed as `--mert <folder>`.
-
-Verify before training:
+Per `AGENTS.md`'s backup responsibility: before training starts, confirm
+`backup_to_gcp.py` is actually running:
 
 ```bash
-ls -la /content/yue2_lora_finetuning/ComfyUI/models/audio_encoders/tokenizer_head_joint_v4.pt
+pgrep -af backup_to_gcp.py || echo "NOT RUNNING"
+tail -5 /content/logs/gcp_backup.log
 ```
 
-License: both the head and YuE2 weights are **CC BY-NC 4.0 — non-commercial**.
-
-## 4. Stage 1 — tokenize the corpus (one-time)
-
-Runs the head over every track and writes the `.semantic.npy` sidecars next to
-the existing `.style.txt` / `.lyrics.txt`. Do it as a `--dry-run` so it also
-populates the VAE-latent cache (needed anyway) and touches no weights.
+If it isn't running:
 
 ```bash
 cd /content/yue2_lora_finetuning
-python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
-  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
-  --checkpoint yue2_3b_bf16.safetensors \
-  --data /content/data/dataset \
-  --semantic-head tokenizer_head_joint_v4.pt \
-  --semantic --no-abc \
-  --eval-holdout 5 --seed 2002 \
-  --steps 100 --out maqam_planner_v1 --dry-run 2>&1 | tee -a /content/logs/train.log
+nohup python backup_to_gcp.py > /content/logs/gcp_backup_stdout.log 2>&1 & disown
 ```
 
-`--eval-holdout 5 --seed 2002` is the leak-free held-out seed from session 4
-(`docs/architecture.md` §6) — carry it into every run.
+**Then extend it.** `backup_to_gcp.py`'s `TARGETS` currently covers only
+`ComfyUI/models/loras/`, `/content/logs/`, and `agent_notes/` (KI-20) — none
+of which is where `joint.py`'s output lands. Before kicking off §5, add a
+fourth target for wherever `joint.py`'s output path resolves to (§5.3 pins
+the literal command); this is a one-line addition to `TARGETS`, not a new
+script. **Do not start the 3000-step run until this is in place** — the whole
+point of today's backup-policy update was to not repeat "no GCS protection
+on the one output that mattered."
 
-**Smoke-test before trusting it:** tokenize 2–3 tracks, then render the token
-round-trip with the acoustic stage (the `yue2_render_tokens_api.json` workflow,
-or `--sample-tokens <song>.semantic.npy` on an acoustic run) and listen. If the
-round trip keeps rhythm/harmony on our Arabic tracks, proceed; if it is noise,
-stop and revisit.
+### 2.3 Environment: expect a second, separate environment
 
-## 5. Stage 2 — planner / AR LoRA (the maqam lever)
-
-Start with semantic-only training behind a 50/50 sheet/no-sheet prompt, so the
-resulting LoRA serves the normal `YuE2GenerateMusic` path, and use the KL trust
-region instead of the ABC regularization set (which we don't have scores for).
+Mothersuperior's scripts want their own stack: Python 3.12 venv,
+`yue2-infer` @ commit `92a73cc7`, torch 2.10 + cu128, torchaudio 2.10,
+transformers, soundfile, scipy, safetensors, demucs. This may not match the
+pinned versions `bootstrap/setup.sh` installs for `ComfyUI-YuE2-Trainer`.
+**Build this in a separate venv**, not inside the existing ComfyUI Python
+environment, so a version mismatch here can't break the working planner
+trainer:
 
 ```bash
-cd /content/yue2_lora_finetuning
-python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
-  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
-  --checkpoint yue2_3b_bf16.safetensors \
-  --data /content/data/dataset \
-  --semantic-head tokenizer_head_joint_v4.pt \
-  --semantic --no-abc --abc-dropout 0.5 --kl-weight 0.5 \
-  --max-tokens 4096 \
-  --rank 32 --alpha 32 --lr 5e-5 --lr-schedule cosine \
-  --steps 100 --save-every 10 --eval-every 10 \
-  --eval-holdout 5 --eval-samples 8 --seed 2002 \
-  --probe-every 10 --probe-max-tokens 8192 \
-  --out maqam_planner_v1 2>&1 | tee -a /content/logs/train.log
+cd /content
+python3.12 -m venv ms_calib_venv
+source ms_calib_venv/bin/activate
+pip install torch==2.10.* torchaudio==2.10.* --index-url https://download.pytorch.org/whl/cu128
+pip install transformers soundfile scipy safetensors demucs
+pip install "git+https://github.com/multimodal-art-projection/YuE.git@92a73cc7"
 ```
 
-**These numbers are starting values, not proven defaults** — the point of
-`--save-every 10` + probes is to pick empirically. What the README says to
-watch:
+Confirm `HF_HOME` already has (or can fetch) `m-a-p/YuE2-3B`, `m-a-p/YuE2-Vae`,
+`m-a-p/MERT-v2-FullSong` — these are large; reuse whatever's already cached
+from the existing bootstrap rather than re-downloading if paths line up.
 
-- The planner **learns fast**: 25–100 steps at `5e-5` already reshape the
-  writing. Do **not** default to thousands of steps.
-- Held-out eval minimum is **advisory**; the checkpoint that sounds closest to
-  the album is often a little past it. Pick by ear.
-- `--probe-every`: a probe that runs to `--probe-max-tokens` **without ending**
-  is over-training (or it learned album-length scores) — use an earlier
-  checkpoint. The last probe that ended normally is the latest worth keeping.
-- `kl` starts near 0 and should level off at a few hundredths, not climb.
-
-Nora's own cap for the analogous rank-64 AR LoRA is **~1500 steps ("past that
-it memorizes")** — another reason to start small and extend only while the
-eval + probes still improve. Extend with the same command plus
-`--existing-lora maqam_planner_v1_000100.safetensors` (total `--steps`).
-
-## 6. Stage 3 — acoustic LoRA (timbre), only after the planner proves out
-
-This is the same acoustic half that was a near-no-op before, but now in the
-mode that matches inference (`--conditioning inference_like --use-semantic`),
-which is the fix for the mismatch that made the first run useless.
+Fetch Mothersuperior's scripts + weights + regularizer pack:
 
 ```bash
-cd /content/yue2_lora_finetuning
-python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py acoustic \
-  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
-  --checkpoint yue2_3b_bf16.safetensors \
-  --data /content/data/dataset \
-  --semantic-head tokenizer_head_joint_v4.pt \
-  --use-semantic --conditioning inference_like \
-  --segment-seconds 30 \
-  --rank 32 --alpha 32 --lr 1e-4 \
-  --steps 2000 --save-every 250 --eval-every 100 \
-  --eval-holdout 5 --eval-samples 8 --seed 2002 \
-  --sample-every 250 --sample-seconds 30 \
-  --out maqam_acoustic_v2 2>&1 | tee -a /content/logs/train.log
+mkdir -p /content/ms_calib && cd /content/ms_calib
+hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 \
+  --local-dir . --include "scripts/*" "tokenizer_head_joint_v4.pt" "nar_lora_joint_v4.pt"
+hf download Mothersuperior/yue2-minted-corpus regularizer/minted_regularizer_pack.pt \
+  --local-dir .
 ```
 
-README guidance: rank 32, strength 1.0–1.5, **1000–3000 steps**; a LoRA that
-muffles/noises the render is over-trained. `--sample-every` renders a fixed
-30 s stream with the LoRA under training so you can hear each checkpoint.
+**Read the scripts before running them.** The model card gives one example
+invocation for `joint.py` with five positional args (`joint_mine 3000 1 1
+tokenizer_head_joint_v4.pt nar_lora_joint_v4.pt`) and no flag documentation.
+Do not guess at what `1 1` means — read the argparse block in
+`scripts/joint.py` before running for real, and paste anything ambiguous
+into `agent_notes/current.md` rather than assuming.
 
-## 7. Evaluation — audio, not loss
+Also: **paths are hard-coded to Mothersuperior's own pod layout**
+(`/workspace/tok/full`, `/workspace/real/...`, `/workspace/yue2-corpus/tracks`,
+`/workspace/real/ar/dataset.pt`). Either recreate that layout under `/content`
+with symlinks, or edit the path constants at the top of each script — check
+which before running `prep_real.py`.
 
-- **First fix the generation-side `cfg_scale` gap** (`docs/architecture.md` §7,
-  `agent_notes/sessions/session-05.md`): the
-  ComfyUI `YuE2GenerateMusic` node never forwards `cfg_scale`, so every ComfyUI
-  render so far ran on an unverified default, not the `1.2` the known-good
-  baseline used. This applies **with the LoRA off**, so it must be fixed before
-  any A/B is trustworthy. Either patch the node to accept/forward `cfg_scale`
-  (the underlying `generate_music()` already supports it) or render through a
-  small script that calls `generate_music()`/`generate_abc()` directly with
-  `cfg_scale=1.2` and `max_duration=400` (the user's 6-minute ceiling).
-- Judge by ear against the base model at the same seed — specifically
-  pronunciation (ق/ح/خ), "genuineness," and whether the maqam actually appears
-  instead of the base model's Western-minor default. **Do not** judge by the
-  loss curve; it plateaus while the LoRA keeps changing.
-- Stack the two LoRAs for the final check: planner on the CLIP path, acoustic
-  on the MODEL path.
+## 3. Convert the dataset to Mothersuperior's expected format
 
-## 8. Open decisions / risks
+Their per-song contract: `<name>.flac` + `<name>.lyrics.txt` (full lyrics,
+section tags intact) + `<name>.txt` (style caption starting with a trigger
+phrase). Our dataset ships `.mp3` + `.lyrics.txt` + `.style.txt` — close, but
+not identical:
 
-- **Tokenizer accuracy is approximate** (~16% exact top-1). The planner learns
-  from near-miss tokens; that is the current ceiling, not a bug to fix.
-- **Two sources disagree on the NAR companion LoRA.** Nora ships one; speedyrulz
-  measured it makes renders *less* similar and does not use it. If Stage 3
-  underdelivers, A/B her `nar_lora_joint_v4` rather than assuming.
-- **No community validation on Arabic/maqam.** Nobody has proven this on
-  melismatic Arabic. We are early adopters; the smoke test in §4 is the guard.
-- `status`-field check (KI-01) and `--max-per-song` capping (KI-02) — still
-  open, low priority.
-- Corpus drift: re-run `verify_dataset.py --dataset-root ...` before trusting
-  the counts above.
+- **Audio:** mp3 → flac, lossless re-encode is fine here (mp3 is already
+  lossy; flac just satisfies their loader, it doesn't recover quality).
+- **Lyrics:** spot-check tag compatibility. Our sample
+  (`hijaz_0049_05_take01.lyrics.txt`) uses `[Intro]`, `[Verse 1]`, `[Chorus]`,
+  `[Verse 2]`, `[Outro]` — Mothersuperior's doc examples use lowercase
+  `[verse]/[chorus]/[bridge]`. Check `cursor_prep.py`'s tag parser before
+  assuming case/numbering doesn't matter; normalize only if the parser
+  actually requires it.
+- **Style caption:** needs a **trigger phrase** prefix (their example:
+  `"xyzq, in the style of xyzq. <description>"`). This corpus doesn't have an
+  existing single-artist trigger since it spans four maqams under one target
+  vocal/production style. **Assumption (flag if wrong):** use one project-wide
+  trigger, e.g. `"maqamverse, in the style of maqamverse."`, prepended to the
+  existing `.style.txt` content verbatim. This is a real open question, not
+  a settled convention — confirm it doesn't collide with anything before
+  running the full corpus through it.
 
-## 9. What NOT to do
+Write a small conversion script rather than doing this by hand — 238 train
++ 18 val tracks:
 
-- **Do not repeat the 1500-step `--conditioning compact` acoustic run.** It is
-  a known near-no-op and structural dead end for the goal.
-- **Do not trust the old `PLAN.md` or the ai-toolkit PR-#1042 claim** — it was
-  fabricated and is resolved (`docs/architecture.md` §5).
-- **Do not use `Starnodes2024/ComfyUI-YuE2-Trainer`** — its own issue reports a
-  trained LoRA with no effect at all.
-- **Do not start, stop, or resume training from a session** — the user runs
-  every command; sessions stage commands and read logs/checkpoints.
+```bash
+python scripts/export_mothersuperior_format.py \
+  --dataset-root /content/data/dataset \
+  --out-root /content/ms_calib/corpus \
+  --trigger-phrase "maqamverse, in the style of maqamverse."
+```
+
+(New script — doesn't exist yet. Spec: walk `train/` + `val/`, for each
+`<name>.mp3` write `<out-root>/<name>.flac` via ffmpeg, `<name>.lyrics.txt`
+copied as-is, `<name>.txt` = trigger phrase + `.style.txt` content. Log any
+tag mismatches found while checking the lyrics point above; don't silently
+normalize.)
+
+## 4. HOLD_TRACK
+
+Reuse the existing audition track for continuity with the base/30/60/100
+comparison you already have opinions on:
+
+```
+HOLD_TRACK=04-وصف-محاسن-الحبيبة-والجمال
+```
+
+Confirm the exact converted filename in `/content/ms_calib/corpus/` matches
+this before passing it to `joint.py` — the raw corpus manifest and the final
+dataset filenames aren't guaranteed identical (KI-01/KI-07 territory).
+
+## 5. Run the calibration
+
+### 5.1 Feature + latent prep
+
+```bash
+cd /content/ms_calib
+source /content/ms_calib_venv/bin/activate
+python scripts/prep_real.py \
+  --corpus /content/ms_calib/corpus \
+  2>&1 | tee -a /content/logs/ms_prep_real.log
+```
+
+(Flags unconfirmed — check `prep_real.py --help` or its argparse block; the
+model card gives the script name only, not its CLI surface.)
+
+### 5.2 Vocal stem + forced alignment
+
+```bash
+python scripts/cursor_prep.py \
+  --corpus /content/ms_calib/corpus \
+  2>&1 | tee -a /content/logs/ms_cursor_prep.log
+```
+
+This runs Demucs (vocal separation) then MMS forced alignment — CPU/GPU mixed
+load, check `nvidia-smi` doesn't collide with anything else running.
+
+### 5.3 The calibration run itself
+
+```bash
+HOLD_TRACK=04-وصف-محاسن-الحبيبة-والجمال \
+  python scripts/joint.py \
+  maqamverse_calib_v1 3000 1 1 \
+  /content/ms_calib/tokenizer_head_joint_v4.pt \
+  /content/ms_calib/nar_lora_joint_v4.pt \
+  2>&1 | tee -a /content/logs/ms_joint.log
+```
+
+Wherever this run's output actually lands (confirm from reading the script,
+per §2.3) is what needs to be added to `backup_to_gcp.py`'s `TARGETS` per
+§2.2, before this command runs — not after.
+
+## 6. What to watch, and the stop/verify signals
+
+- **First 20–30 steps:** confirm VRAM (§2.1) and extrapolate total runtime.
+  Report both back before letting it run unattended for hours.
+- **`minted_val` held-out loss** (the 5%-by-hash held-out slice baked into
+  the regularizer pack) should stay flat — that's the "a small artist set
+  didn't collapse the token grammar" check, same spirit as KI-03's held-out
+  eval on the planner side. Rising `minted_val` loss is a stop signal.
+- **HOLD_TRACK round-trip render, done twice** — once with the stock head,
+  once with the calibrated checkpoint, same seed, same prompt — is the actual
+  verification, not the training loss curve alone. Loss tells you the head
+  moved; only your ear tells you it moved toward "sounds like the corpus."
+- **Compatibility check** (this is the open question from §1): before
+  deciding today was worth it, confirm the calibrated head/NAR files can even
+  be loaded by the existing `--semantic-head` flag in `train_cli.py` (check
+  `nodes_yue2.py`'s loader against the calibrated checkpoint's keys/shape).
+  If they can't, that's a same-day finding worth surfacing immediately, not
+  a next-session surprise.
+
+## 7. Decision tree for the next session
+
+- **Calibrated round-trip clearly sounds closer to the training corpus's
+  لحن, with pronunciation still intact** → re-tokenize the full corpus with
+  the new head (`train_cli.py`'s `--semantic-head`, `--semantic-force`) and
+  retrain the planner LoRA fresh (not resumed — the underlying tokens
+  changed, so `_000030`/etc. checkpoints aren't a valid resume base anymore).
+  The old `maqam_planner_v1` checkpoints stay as a labeled comparison point,
+  not a discard.
+- **No audible difference from the stock head** → the tokenizer wasn't
+  actually the bottleneck; revisit Path 1 (SheetSage2 melody-to-ABC as a
+  second, symbolic training signal — `t8star/YuE2-Comfy` per
+  `architecture.md` §5, currently an unverified lead) instead of re-running
+  calibration with different hyperparameters blind.
+- **Calibration itself fails to load/run** (environment or path issues) →
+  that's a session in itself; update `docs/known-issues.md` with whatever
+  broke rather than reconstructing it from memory next time.
+
+## Session hygiene (unchanged from `AGENTS.md`)
+
+- Anything copy-pasteable goes in `agent_notes/current.md`, overwritten each
+  time.
+- This session never starts, stops, or resumes training or the calibration
+  run — the user runs every command.
+- Check `nvidia-smi` before anything GPU-heavy.
+- Confirm `backup_to_gcp.py` is running and covers today's new output path
+  before, not after, the long run starts (§2.2).
