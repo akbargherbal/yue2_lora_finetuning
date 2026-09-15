@@ -42,6 +42,20 @@
 > "across every generation mode tested," before any LoRA work existed. **Read
 > §15 before doing anything — it supersedes §14's "what is still unknown" list
 > and gives a cheap, no-training next test.** §10 was updated to match.
+>
+> **Session 6 (investigation + docs only, no training):** identified the
+> community piece the whole project was missing. The "Make The Robot Do It"
+> / Nora video is about `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`
+> — the **audio → semantic-token encoder YuE2 never shipped**. It is already
+> wired into our chosen backend: `train_cli.py --semantic-head <file>` (and the
+> "YuE2 Semantic Tokens (community head)" node) predicts YuE2's 32,768 semantic
+> codes for our own recordings and writes `<song>.semantic.npy`. That unlocks
+> the **planner/AR LoRA on semantic tokens** — the composition half that
+> actually controls maqam and pronunciation — and **removes the SheetSage2/ABC
+> blocker**. The old `PLAN.md` was stale and grounded in the fabricated
+> ai-toolkit claim; it has been **rewritten from scratch** as a forward-looking
+> Colab run plan. **This changes §2, §7, §8 and §10, reverses the
+> acoustic-first ordering, and is detailed in §16.**
 
 ## 1. The goal
 
@@ -113,11 +127,14 @@ setup/dry run, §12 checkpoint/resume/observability, §13 GCS backup.
     is also supported for tracks up to ~470s. Our longest track is 370s, so
     either mode fits. This closes the "clip length" concern raised earlier
     in this project.
-  - Planner training needs an ABC score per track, produced either by
-    SheetSage2 (fixed 300s transcription window — a real risk for our
-    median 253s / max 370s tracks, and possibly a poor fit for melismatic
-    Arabic vocal lines, same concern PLAN.md §4 already raised) or supplied
-    by hand. **Not yet decided how to get scores for our corpus.**
+  - Planner training can target an **ABC score** (`--no-abc` off; needs
+    SheetSage2 or hand-supplied `.abc`; SheetSage2's fixed 300s window is a
+    poor fit for our median 253s / max 370s tracks and possibly for melismatic
+    Arabic lines) **or the semantic tokens themselves** (`--semantic`). The
+    semantic target needs **no scores** — it needs the `Mothersuperior` head
+    (next bullet). **Session 6: the semantic path is the one this project
+    intends to use, so the ABC/SheetSage2 blocker is off the critical path
+    (see §16).**
   - `Starnodes2024/ComfyUI-YuE2-Trainer` is a separate, differently-authored
     project with a confusingly similar name; the speedyrulz README's own
     benchmark found it performed slightly worse (CLAP similarity -0.004 vs.
@@ -128,6 +145,22 @@ setup/dry run, §12 checkpoint/resume/observability, §13 GCS backup.
     0.0/1.0/2.0 across two different LoRA files. That corroborates the
     ~zero CLAP delta rather than it being a rival author's biased table.
     **Don't use the Starnodes2024 fork.**
+- **`Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4` (HuggingFace) —
+  the missing encoder, found session 6** (video "How I trained the missing YuE2
+  Tokenizer", channel *Make The Robot Do It* / Nora, Sep 14 2026). YuE2 shipped
+  no audio → semantic-token encoder, so real recordings had no training targets.
+  Nora trained one — MERT-v2-FullSong layer-20 features → 8-layer transformer →
+  32,768 YuE2 codes; ~16% exact top-1 on YuE2's own songs, ~95% by ear on
+  round-trips — plus a rank-32 NAR LoRA companion, on 4,765 YuE2 self-generated
+  songs then adapted to real audio with the frozen decoder as teacher. **It is
+  already integrated into our backend:** the trainer's *YuE2 Semantic Tokens
+  (community head)* node and the CLI's `--semantic-head <file>` write
+  `<song>.semantic.npy` for our tracks. Her own recipe is: tokenize real songs →
+  rank-64 **AR LoRA** with a lyric cursor + a 50/50 "minted" regularizer pack,
+  capped at ~1500 steps, checkpoint picked by ear. **Note the disagreement:**
+  she ships the NAR companion LoRA; speedyrulz measured it makes renders *less*
+  similar and does not use it — A/B it rather than assuming. License: CC BY-NC
+  4.0 (non-commercial), same as YuE2.
 - **`t8star/YuE2-Comfy` (HuggingFace) — unexplored lead for the ABC
   problem, found session 3.** A ComfyUI package that bundles SheetSage2 and
   MERT alongside an assistant that generates lyrics, style, and *optional
@@ -383,10 +416,12 @@ failure mode and doesn't false-positive on the clean case.
 
 - `maqam_prompt_generator.py` — **committed as of `3623aef`, see §4.**
   No longer blocks a fresh clone.
-- `PLAN.md` — original written dataset-prep plan. Mostly executed now;
-  §2 (audio cleanup) turned out to be unnecessary rather than done (§6),
-  §4 (symbolic score) is still open and now tied to the planner-LoRA
-  decision (§2 above), not just an optional nice-to-have.
+- `PLAN.md` — **rewritten from scratch in session 6.** The old dataset-prep
+  plan was fully executed (and its §2 audio cleanup proved unnecessary, §6),
+  but its §0 rested on the fabricated ai-toolkit claim (§2) — it is no longer a
+  source of truth. The new `PLAN.md` is the forward-looking Colab run plan for
+  the **semantic-token / planner-LoRA** path: bootstrap additions (§3),
+  tokenize (§4), planner LoRA (§5), acoustic LoRA (§6), evaluation (§7).
 - `prepare_dataset.py` — updated in session 2, see §6.
 - `verify_dataset.py` — new in session 2, see §6.
 - `bootstrap/setup.sh` — Colab bootstrap. **Fixed in session 4**: wrong
@@ -431,11 +466,16 @@ failure mode and doesn't false-positive on the clean case.
     poem in **K:Fm (Western)**, not Hijaz. **The planner LoRA is the real target,
     not a later step; the pronunciation problem is upstream in the planner's
     semantic tokens.**
-- **Symbolic score / ABC transcription** for the planner LoRA path.
-  SheetSage2's fixed 300s window is a mismatch for some of our tracks
-  (median 253s, max 370s) and its fit for melismatic Arabic vocal lines is
-  unverified. No scores have been generated. This is now a **blocking**
-  decision if the planner LoRA is wanted, not an optional side-quest.
+  - **Session 6 resolution:** with the tokenizer (§16) the planner's semantic
+    target is unblocked, so the ordering is now **planner-first, acoustic
+    second** — see the new `PLAN.md`.
+- **Symbolic score / ABC transcription — DE-PRIORITIZED session 6, no longer
+  blocking.** It was blocking only while the planner's sole target was ABC;
+  with Mothersuperior's head (next bullet up, §2/§16) the planner trains on
+  **semantic tokens** (`--semantic --no-abc`) with no scores at all. So
+  SheetSage2's 300s window (vs. our median 253s / max 370s) and its unverified
+  Arabic fit are off the critical path. Scores remain optional, only for
+  score-guided covers.
 - **`--max-per-song` capping** — leaning no-cap, not finalized.
 - **`status` field investigation** — see §5, quick check not yet run.
 - **First real LoRA training HAS now been run (session 4)** — 1500 acoustic steps
@@ -462,35 +502,30 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 10. Suggested first steps for next session
 
-Session 4 ran the first real acoustic training and a full generation test that the
-user rejected. Session 5 diffed the pipeline against the known-good baseline
-and found a concrete lead. **Read §15 first** (it supersedes point 1 below in
-its original form). New priorities:
+Session 6 rewrote the plan. **Read `PLAN.md` first** — it is now the
+forward-looking Colab run plan, and §16 below records the findings behind it.
+Priorities, in order:
 
-1. **Test the `cfg_scale` fix — top priority, cheap, no training.** §15 found
-   that `YuE2GenerateMusic` never wires `cfg_scale` through to the underlying
-   sampler, unlike the known-good baseline's explicit `--cfg 1.2`. Patch the
-   node (or call `generate_music()`/`generate_abc()` directly) to set
-   `cfg_scale=1.2`, also set `max_duration=400` (per the user's real 6-minute
-   ceiling, not the 214s that caused §14's 3:34 cut), and re-render the same
-   held-out Hijaz poem. **Do not retrain the acoustic LoRA to test this** — it
-   isn't implicated (§14: near-no-op; §15: the gap applies with the LoRA off
-   too).
-2. **If `cfg_scale=1.2` doesn't fully fix it**, work down §15's revised list:
-   style-caption wording, then planner sampling params — in that order.
-   Tashkeel and the Western-key/K:Fm bias are **closed**, not open (§15):
-   tashkeel is ruled out by the user directly, and the Western-key bias is
-   confirmed pre-existing in the base model itself, predating any fine-tuning.
-3. **The planner LoRA / ABC remains the real lever** for maqam and composition,
-   independent of how the `cfg_scale` test turns out.
-4. If acoustic training is ever retried anyway (e.g. once `cfg_scale` is fixed
-   and a real style-transfer signal is worth chasing): fix the conditioning
-   mismatch — `--conditioning inference_like`, `--rank 32`, 10k–30k steps,
-   `--save-every ~1000`, in tmux with the GCS backup running, A/B rendered
-   partials (audio, not loss).
-5. `status`-field check (§5) and `--max-per-song` capping — still open.
-6. Corpus drift note (unchanged): `verify_dataset.py --dataset-root ...` detects
-   it; re-run before trusting the §5 numbers.
+1. **Add the tokenizer to the Colab bootstrap.** `bootstrap/setup.sh` must
+   download `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`
+   (`tokenizer_head_joint_v4.pt`) into `ComfyUI/models/audio_encoders/`, and
+   make `m-a-p/MERT-v2-FullSong` available. Exact lines in `PLAN.md` §3.
+2. **Tokenize the corpus** with `train_cli.py … --semantic-head
+   tokenizer_head_joint_v4.pt` so every track gets a `.semantic.npy`
+   (`PLAN.md` §4). Smoke-test on a few tracks and listen to a round trip first.
+3. **Train the planner/AR LoRA on semantic tokens** — the composition half, the
+   only thing that moves maqam/pronunciation (`PLAN.md` §5). Start with
+   `--semantic --no-abc --abc-dropout 0.5 --kl-weight 0.5`, small step counts,
+   `--save-every 10`, probes on; pick by ear.
+4. **Fix the generation-side `cfg_scale` gap before trusting any A/B** (§15).
+   `YuE2GenerateMusic` still doesn't forward it, and the gap applies with the
+   LoRA off too. Then re-render with `cfg_scale=1.2` and `max_duration=400`.
+5. **Acoustic LoRA only after the planner proves out**, and then in the fixed
+   mode: `--conditioning inference_like --use-semantic` (`PLAN.md` §6). Do not
+   repeat the 1500-step `compact` run (§14).
+6. `status`-field check (§5) and `--max-per-song` capping — still open, low
+   priority. Corpus drift: re-run `verify_dataset.py --dataset-root ...` before
+   trusting the §5 numbers.
 
 ## 11. Session 4 — setup done, dry run passed, first run staged
 
@@ -847,3 +882,69 @@ Western-key bias now removed as closed):
    regardless of how the `cfg_scale` test turns out — that's a separate,
    already-understood blocker (symbolic-score generation), not something this
    session's finding changes.
+
+## 16. Session 6 — the missing tokenizer, found and already wired in
+
+This session ran **no training and no generation**. It (a) identified the
+community artifact the project had been missing, (b) verified from the
+trainer's actual source that it is already integrated, and (c) rewrote
+`PLAN.md` around it. It exists so the next session starts the real work instead
+of re-deriving the toolchain.
+
+### The finding
+
+The video "How I trained the missing YuE2 Tokenizer" (channel *Make The Robot
+Do It* / Nora) is about `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`
+on Hugging Face — **the audio → semantic-token encoder YuE2 never shipped**,
+plus a rank-32 NAR LoRA companion. Without it, real recordings have no semantic
+tokens, which is why the planner's semantic path was unusable and the project
+was stuck on ABC/SheetSage2. Full facts are in §2.
+
+### It is already integrated into our backend (verified from source)
+
+`speedyrulz/ComfyUI-YuE2-Trainer` ships the head as a first-class option. Read
+directly from `train_cli.py` / the README this session:
+
+- **`--semantic-head <file>`** (common flag) — predicts tokens for every song
+  and writes `<song>.semantic.npy`; `--semantic-force` recomputes existing
+  sidecars; **`--mert`** defaults to `m-a-p/MERT-v2-FullSong`.
+- Acoustic: **`--use-semantic`** conditions on those tokens;
+  `--conditioning inference_like` lays out the prefix the way generation does;
+  `--sample-every`/`--sample-tokens` render a stream with the LoRA under
+  training (i.e. an audible checkpoint A/B).
+- Planner: **`--semantic`** adds the semantic-token target; **`--no-abc`** drops
+  the ABC target; **`--abc-dropout`** trains a share of draws behind the
+  no-sheet prompt; **`--kl-weight`** is a trust region toward the base model;
+  `--probe-every` writes whole scores/token streams per checkpoint (the
+  over-training signal).
+- The node equivalents are **YuE2 Semantic Tokens (community head)** and the
+  example graph `yue2_train_semantic_planner_api.json`.
+
+**Consequence:** the planner can now train on **semantic tokens with no ABC
+scores** (`--semantic --no-abc --abc-dropout 0.5`), which makes the
+SheetSage2/melismatic-Arabic risk moot and removes §8's last blocker. This
+**reverses the acoustic-first ordering** (§8): planner first, acoustic second.
+
+### Honest caveats
+
+- **The tokenizer is approximate** (~16% exact top-1 on YuE2's own songs; ~95%
+  by ear on round-trips). The planner learns from near-miss codes; that's the
+  current community ceiling.
+- **The two sources disagree on the NAR LoRA** — Nora ships it, speedyrulz
+  measured it makes renders *less* similar and doesn't use it. Unresolved; A/B
+  it if Stage 3 underdelivers.
+- **Nothing here is validated on Arabic/maqam.** We are early adopters.
+- The `PLAN.md` that existed before this session was **grounded in the
+  fabricated ai-toolkit PR #1042 claim** — its §0 was actively misleading. It
+  has been rewritten from scratch; treat the old text as gone.
+
+### What changed as a result
+
+- `PLAN.md` — full rewrite (bootstrap additions → tokenize → planner LoRA →
+  acoustic LoRA → evaluation), with exact CLI commands.
+- `context.md` — §2 (tokenizer bullet + planner-target correction), §7
+  (`PLAN.md` description), §8 (ABC blocker de-prioritized, ordering reversed),
+  §10 (new priorities), and this section.
+- Still open, unchanged: `status`-field check (§5), `--max-per-song` capping,
+  corpus-drift re-verify, and the generation-side `cfg_scale` gap (§15, now a
+  prerequisite for trustworthy evaluation rather than the top training item).

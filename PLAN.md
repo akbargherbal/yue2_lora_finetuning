@@ -1,231 +1,216 @@
-# Dataset Prep Plan — YuE2-3B LoRA (Maqam / Arabic Orchestral Rock)
+# PLAN — YuE2-3B Maqam Style LoRA (Colab run plan)
 
-> **Revision note:** this plan was updated after seeing the real corpus layout
-> (`min_4stars_ai_music/<maqam>/<workspace>/`). Two assumptions from the first
-> pass were wrong and are corrected below: (1) the manifest is a *superset* —
-> a track survives only if its audio file is still physically present next to
-> the manifest, which is the actual result of your by-ear 4–5★ curation; (2)
-> multiple surviving takes (`SONG_A`/`SONG_B`/`RETAKE_...`) of the same poem
-> are **not** near-duplicate noise to collapse to one — if more than one take
-> of a poem passed your listening pass, that's real, wanted audio diversity
-> for the same caption. See `prepare_dataset.py` for the corrected pipeline.
+> **Rewritten from scratch, session 6.** The previous `PLAN.md` was a
+> dataset-prep plan whose §0 rested on the fabricated "ai-toolkit supports
+> YuE2 (PR #1042)" claim (see `context.md` §2) — it is superseded, not
+> amended. This file is the forward-looking plan for what to do **when we move
+> to Colab and start fine-tuning**. Read `context.md` first for the full
+> history; this is the action plan.
 
-## 0. What YuE2's LoRA path actually expects
+## 0. Where we are
 
-Fine-tuning support landed in `ostris/ai-toolkit` (PR #1042, merged Sep 14 2026),
-built on the `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4` audio
-tokenizer. Relevant to dataset prep specifically:
+- **Dataset: done and verified.** `/content/data/dataset/` = 256 tracks (238
+  train / 18 val), uniform 48 kHz stereo MP3, 18.0 h total, poem-safe split,
+  `manifest.csv` cross-checked. `prepare_dataset.py` / `verify_dataset.py`
+  own it. No audio cleanup or segmentation is needed (context.md §6).
+- **Backend: installed and sane.** `speedyrulz/ComfyUI-YuE2-Trainer` +
+  `yue2_3b_bf16.safetensors`. Its own tests check the training forward matches
+  ComfyUI inference (cosine 0.9999) and that LoRA keys load with zero
+  unmatched keys.
+- **One acoustic run happened and it told us something:** 1500 steps,
+  `--conditioning compact`, near-no-op (`waveform corr 0.946`). That was the
+  *wrong half* of the model in the *wrong conditioning mode* (context.md §14).
+  It is a smoke test, not a fine-tune, and it is not to be repeated as-is.
+- **The missing piece is found and already integrated** (context.md §16):
+  `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`, the audio →
+  semantic-token encoder YuE2 never shipped. The trainer can run it
+  (`--semantic-head`) to write `<song>.semantic.npy` for our own recordings.
 
-- Each training example is an **audio file + a normalized caption**, the same
-  pairing convention ai-toolkit uses for image/video LoRAs (audio ↔ style text).
-- There's an **optional symbolic score ("sage sheet")** layer. The toolkit
-  trains with it present 50% of the time and absent 50% of the time, so the
-  resulting LoRA works whether or not you supply a score at inference. You
-  don't strictly need scores to get a working LoRA — but including them for
-  at least some tracks improves melody/chord controllability, which matters
-  for your winning-template use case (you care about consistent structure,
-  not just timbre).
-- Captions get **normalized** (whitespace/casing/punctuation) before training,
-  so raw human-authored captions are fine as input.
-- There's a dataset dropout setting (some fraction of steps train caption-less),
-  which is a training-time knob, not something you need to bake into the data.
+## 1. The core correction: which half does what
 
-None of this requires re-deriving your prompt template — it requires turning
-what you already have into the right *file layout*.
+| Half | LoRA | Trains | Controls |
+|---|---|---|---|
+| AR / planner | `planner` (CLIP) | next-token over `style + lyrics → ABC` and/or `→ semantic tokens` | **composition**: melody, harmony, structure, maqam — and the semantic tokens that pronunciation comes from |
+| NAR / acoustic | `acoustic` (MODEL) | flow-matching on VAE latents | render only: timbre, instrument sound, mix, production |
 
-## 1. Inventory the source material — the folder tree *is* the filter
+**The goal of this project is a maqam + pronunciation + style change. That lives
+in the planner.** The acoustic LoRA is the "same song, re-recorded" (both
+sources agree). So: **planner first, acoustic second.** The old acoustic-first
+ordering is reversed.
 
-Real layout:
+## 2. Why the planner was blocked, and what unblocked it
 
-```
-min_4stars_ai_music/
-├── ajam/       <workspace>/  workspace_manifest.json + surviving .mp3s
-├── hijaz/      ...
-├── kurd/       ...
-└── nahawand/   ...
-```
+YuE2 shipped with no encoder that turns a real recording into semantic tokens,
+so real songs had no teachable target on the planner's semantic path. The only
+planner route was ABC scores via SheetSage2 — a poor fit for our median-253s /
+max-370s tracks and unverified on melismatic Arabic.
 
-~257 kept tracks across ~156 distinct poems, close to your reported
-Nahawand 73 / Kurd 62 / Hijaz 60 / Ajam 62.
+`Mothersuperior`'s head fixes exactly that. It is **already wired in**:
 
-Key facts this structure implies:
+- Node: **YuE2 Semantic Tokens (community head)**.
+- CLI: **`--semantic-head <file>`** — predicts tokens for every song and
+  writes `<song>.semantic.npy` (skips existing sidecars unless
+  `--semantic-force`).
 
-1. **Each `workspace_manifest.json` lists every track ever generated in that
-   session — including ones you rated below 4 stars and deleted.** The
-   *only* surviving signal for "this one made the cut" is that its audio
-   file still exists in the same folder. There's no separate `status` field
-   to trust — presence on disk is the ground truth. `prepare_dataset.py`
-   treats it exactly this way: walk each manifest, keep an entry only if
-   `assigned_filename` resolves to a real file next to it.
-2. **The maqam comes from the top-level folder name**, not from re-parsing
-   the caption text. That's more reliable than regexing "Maqam X" out of
-   `styles` (which is what the first draft of this script did) — the folder
-   is how you actually organized your own judgment. The script still
-   cross-checks the caption's stated maqam against the folder and warns on
-   any mismatch, since that's a cheap way to catch a mislabeled track.
-3. **Don't collapse `SONG_A`/`SONG_B`/`RETAKE_...` takes to one per poem.**
-   Every take still on disk already passed your ears. If two or three takes
-   of the same poem survived, keep all of them — they're different audio
-   renders of the same style target, which is exactly the kind of variation
-   a LoRA benefits from, not redundant noise. (`--max-per-song` is available
-   if a handful of heavily-retried poems end up dominating — see Section 6.)
-4. **The same poem can reappear across multiple workspace folders** (e.g.
-   generated on two different dates, sometimes with a differently-cased
-   workspace name — `lamiyat_alshanfara_14082026` vs
-   `Lamiyat_Alshanfara_16082026`). These must be grouped as *one song* for
-   train/val splitting even though they live in different folders, or you
-   risk the same lyrics appearing in both train and val. The script groups
-   by normalized title + maqam, not by workspace or filename.
-5. **Filename conventions aren't fully consistent** — most are
-   `<title>_SONG_<letter>.mp3` or `Retake_<title>_SONG_<letter>.mp3`, but a
-   few have no suffix at all (`ليس-الجمال-بمئزر.mp3`). None of this matters
-   for grouping, since the poem identity comes from the manifest's
-   `original_title` field, not the filename — the filename only needs to
-   resolve to a real file.
-6. **Unicode normalization mismatches are a real risk with Arabic filenames.**
-   The same title can be NFC- or NFD-normalized differently depending on
-   what wrote the manifest vs. what wrote the file to disk, which would make
-   a naive exact-string match silently drop valid tracks. The script
-   normalizes both sides before comparing.
-7. Instrumental-mode outputs, if any exist in this corpus, should still be
-   split into a separate caption family from vocal tracks — mixing "vocals"
-   and "no vocals field" examples under one style tag teaches the model that
-   vocals are optional, which isn't the target.
+Consequence: the planner can now train on **semantic tokens with no scores at
+all** (`--semantic --no-abc`). The ABC/SheetSage2 blocker is off the critical
+path. Its accuracy is approximate (~16% exact top-1 on YuE2's own songs, ~95%
+by ear on round-trips) — treat the labels as noisy but usable.
 
-## 2. Audio-side cleanup
+## 3. Pre-flight in Colab (bootstrap additions)
 
-1. **Format/rate**: check what the tokenizer expects (likely 44.1/48kHz,
-   mono or stereo WAV) — resample everything to one consistent target rather
-   than trusting Suno's mixed MP3 bitrates and sample rates.
-2. **Loudness normalize** (e.g. EBU R128 / `-14 LUFS` via `pyloudnorm` or
-   `ffmpeg-normalize`) so the LoRA doesn't learn "loud" as part of the style.
-3. **Trim leading/trailing silence** and cut out any Suno intro/outro
-   artifacts (fade glitches, truncated final words) — these are exactly the
-   kind of defect that a 200-300 track LoRA will amplify if left in.
-4. **Length check**: if YuE2's context window caps clip length, decide now
-   whether long tracks get trimmed to the strongest ~60-90s section (verse +
-   chorus) or split into multiple training clips with matching caption
-   sub-segments — don't just truncate blindly, since that would cut a verse
-   mid-word.
-5. **Reject list**: build a manual or automatic (silence-ratio, clipping,
-   duration-outlier) QC pass and log rejected `clip_id`s with a reason. Don't
-   just delete — keep the reasons, since you'll want to check the filter
-   isn't too aggressive once you see how many tracks survive.
+`bootstrap/setup.sh` must also fetch the head. Add next to the checkpoint
+download job (uses the `$COMFY` variable already defined there):
 
-## 3. Caption-side prep
-
-This is the part your `maqam_prompt_generator.py` already half-solves — reuse
-it rather than re-deriving the template.
-
-1. **Regenerate captions from the fixed template**, not from Suno's stored
-   `styles` string as-is. Your manifest's stored strings already match the
-   generator's `build_prompt()` output (compare `GENRE_STANDARD`,
-   `PRODUCTION_STANDARD`, `INSTRUMENTATION`, `EXCLUDE` against the manifest —
-   they're identical), so this is mostly a consistency check: catch any track
-   whose stored caption drifted from the current template (typos, an older
-   wording) and re-render it via `build_prompt(maqam_name, start_phrase, mood)`
-   so every example in the dataset has an identical scaffold.
-2. **Keep the `[Is_MAX_MODE...]` / `[START_ON: ...]` header or strip it** —
-   decide once, consistently. That header is a Suno-specific control token;
-   if YuE2 doesn't recognize it, it's just literal text the model will try to
-   associate with your style, which is harmless but wasted signal. If
-   ai-toolkit's caption normalization doesn't strip bracketed control tokens,
-   consider stripping it yourself for the *caption* file while keeping the
-   raw original in your manifest for reference.
-3. **Decide what to do with `mood`.** It's the one field that varies per
-   track ("solemn, severe, authoritative" vs "menacing, tense, dark" vs
-   "melancholic, longing, nostalgic"). For LoRA training this is useful
-   *if* you want the resulting model to respond to mood words — keep it in.
-   If you want the LoRA to only ever produce this one "epic hymn" character
-   regardless of mood, drop the field entirely for training captions (you can
-   still keep it in your manifest as metadata).
-4. **Fold in the maqam name explicitly** if it isn't already prominent enough
-   in the caption for the model to key off it — you only have 4 maqams
-   (Hijaz, Nahawand, Ajam, Kurd), so this is a natural sub-style axis worth
-   the model actually learning, rather than mood, which is unbounded text.
-5. **Do NOT reintroduce free-text LLM-generated mood variation.** Your own
-   generator's docstring says an earlier attempt to have an LLM vary mood
-   introduced unwanted drift — same risk applies to captioning for training:
-   keep the caption vocabulary closed and template-driven, not freshly
-   generated per track.
-
-## 4. Optional: symbolic score ("sage sheet") extraction
-
-The YuE2 repo ships `SheetSage2` for deriving a symbolic score from audio.
-Since you don't have source MIDI/scores (these were Suno renders), you'd
-need to derive scores after the fact:
-
-1. Run `SheetSage2` (or the toolkit's built-in score loader, if it accepts
-   audio-derived input) on a representative subset first — not the whole
-   corpus — and manually check output quality on 5-10 tracks before
-   committing to running it on all ~250.
-2. If quality is poor on the melismatic Arabic vocal lines (a real risk —
-   symbolic transcription tools are usually tuned for Western tonal/rhythmic
-   conventions, and your `maqam_prompt_generator.py` already excludes
-   quarter-tone maqams for exactly this kind of Western-mapping problem),
-   it's reasonable to skip scores entirely and rely on the 50%-dropout
-   training path working caption-only.
-3. If you do include scores, keep the same per-clip pairing convention
-   ai-toolkit expects (see Section 5) so score files line up 1:1 with audio.
-
-## 5. Directory layout
-
-Match ai-toolkit's expected per-example pairing (audio + caption, optionally
-+ score) with a flat, predictable structure:
-
-```
-dataset/
-├── train/
-│   ├── 0001_hijaz_01-الديار.wav
-│   ├── 0001_hijaz_01-الديار.txt        # caption
-│   ├── 0001_hijaz_01-الديار.score.json # optional symbolic score
-│   ├── 0002_kurd_02-سم-الشعراء.wav
-│   ├── 0002_kurd_02-سم-الشعراء.txt
-│   └── ...
-├── val/
-│   └── ...  (same layout, held-out tracks)
-└── manifest.csv   # your own bookkeeping, not consumed by the trainer
+```bash
+start_job tokenizer \
+  bash -c 'mkdir -p "'"$COMFY"'/models/audio_encoders" && \
+           hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 \
+             tokenizer_head_joint_v4.pt \
+             --local-dir "'"$COMFY"'/models/audio_encoders"'
 ```
 
-Use ASCII-safe, sequential filenames as the canonical training filenames
-(keep the Arabic title as metadata in `manifest.csv`, not as the literal
-audio filename) to avoid encoding issues in tooling that doesn't handle
-Arabic filenames cleanly.
+MERT-v2-FullSong (~630 MB) can be auto-fetched via `--mert m-a-p/MERT-v2-FullSong`
+(default), or pre-downloaded to a folder and passed as `--mert <folder>`.
 
-## 6. Train/val split — do it by poem, not by clip, across workspaces too
+Verify before training:
 
-Because takes of the same poem share lyrics and caption — and the same poem
-can span multiple workspace folders (Section 1.4) — a random per-clip split
-risks leaking near-duplicates across train/val, making validation loss
-meaningless. Split by normalized `original_title` + maqam, so every surviving
-take of a poem (regardless of which workspace or which `SONG_X` it came from)
-stays on the same side of the split. `prepare_dataset.py` does this and
-stratifies by maqam so all four appear in val at roughly the same rate
-(~90/10 by default, tunable via `--val-fraction`).
+```bash
+ls -la /content/yue2_lora_finetuning/ComfyUI/models/audio_encoders/tokenizer_head_joint_v4.pt
+```
 
-**On overrepresented poems:** the script prints a "most-retried poems" report
-before splitting. If a handful of poems have 3+ surviving takes while most
-have 1, those poems get proportionally more training weight. That's usually
-fine (more good audio for the style target), but if it looks skewed enough to
-worry about, rerun with `--max-per-song 2` (or similar) to cap it — this is a
-judgment call best made after looking at the actual printed distribution on
-your full corpus, not decided blind.
+License: both the head and YuE2 weights are **CC BY-NC 4.0 — non-commercial**.
 
-## 7. Script: build the dataset from your manifests
+## 4. Stage 1 — tokenize the corpus (one-time)
 
-A single script to: merge manifests → dedupe A/B pairs → normalize captions
-via your existing generator → copy/convert audio → split → write the folder
-above and a `manifest.csv` for your own tracking. See `prepare_dataset.py`
-(companion file). Run it once dry-run (`--dry-run`) to review the plan before
-it touches any files.
+Runs the head over every track and writes the `.semantic.npy` sidecars next to
+the existing `.style.txt` / `.lyrics.txt`. Do it as a `--dry-run` so it also
+populates the VAE-latent cache (needed anyway) and touches no weights.
 
-## 8. Before you commit GPU time
+```bash
+cd /content/yue2_lora_finetuning
+python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --semantic-head tokenizer_head_joint_v4.pt \
+  --eval-holdout 5 --seed 2002 \
+  --steps 100 --out maqam_planner_v1 --dry-run 2>&1 | tee -a /content/logs/train.log
+```
 
-- Spot-check 15-20 finished dataset entries by ear against their `.txt`
-  caption — catch any audio/caption mismatch from a bad merge before it
-  trains into the LoRA.
-- Confirm final corpus duration and count per maqam — if one maqam (e.g.
-  Ajam) is heavily underrepresented, expect the LoRA to be weaker on it, and
-  decide whether to accept that or generate more source tracks first.
-- Keep the reject log from Section 2 — if you rerun after fixing something,
-  you don't want to re-review the same 40 rejected clips a second time.
+`--eval-holdout 5 --seed 2002` is the leak-free held-out seed from session 4
+(context.md §11) — carry it into every run.
+
+**Smoke-test before trusting it:** tokenize 2–3 tracks, then render the token
+round-trip with the acoustic stage (the `yue2_render_tokens_api.json` workflow,
+or `--sample-tokens <song>.semantic.npy` on an acoustic run) and listen. If the
+round trip keeps rhythm/harmony on our Arabic tracks, proceed; if it is noise,
+stop and revisit.
+
+## 5. Stage 2 — planner / AR LoRA (the maqam lever)
+
+Start with semantic-only training behind a 50/50 sheet/no-sheet prompt, so the
+resulting LoRA serves the normal `YuE2GenerateMusic` path, and use the KL trust
+region instead of the ABC regularization set (which we don't have scores for).
+
+```bash
+cd /content/yue2_lora_finetuning
+python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --semantic-head tokenizer_head_joint_v4.pt \
+  --semantic --no-abc --abc-dropout 0.5 --kl-weight 0.5 \
+  --max-tokens 4096 \
+  --rank 32 --alpha 32 --lr 5e-5 --lr-schedule cosine \
+  --steps 100 --save-every 10 --eval-every 10 \
+  --eval-holdout 5 --eval-samples 8 --seed 2002 \
+  --probe-every 10 --probe-max-tokens 8192 \
+  --out maqam_planner_v1 2>&1 | tee -a /content/logs/train.log
+```
+
+**These numbers are starting values, not proven defaults** — the point of
+`--save-every 10` + probes is to pick empirically. What the README says to
+watch:
+
+- The planner **learns fast**: 25–100 steps at `5e-5` already reshape the
+  writing. Do **not** default to thousands of steps.
+- Held-out eval minimum is **advisory**; the checkpoint that sounds closest to
+  the album is often a little past it. Pick by ear.
+- `--probe-every`: a probe that runs to `--probe-max-tokens` **without ending**
+  is over-training (or it learned album-length scores) — use an earlier
+  checkpoint. The last probe that ended normally is the latest worth keeping.
+- `kl` starts near 0 and should level off at a few hundredths, not climb.
+
+Nora's own cap for the analogous rank-64 AR LoRA is **~1500 steps ("past that
+it memorizes")** — another reason to start small and extend only while the
+eval + probes still improve. Extend with the same command plus
+`--existing-lora maqam_planner_v1_000100.safetensors` (total `--steps`).
+
+## 6. Stage 3 — acoustic LoRA (timbre), only after the planner proves out
+
+This is the same acoustic half that was a near-no-op before, but now in the
+mode that matches inference (`--conditioning inference_like --use-semantic`),
+which is the fix for the mismatch that made the first run useless.
+
+```bash
+cd /content/yue2_lora_finetuning
+python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py acoustic \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --semantic-head tokenizer_head_joint_v4.pt \
+  --use-semantic --conditioning inference_like \
+  --segment-seconds 30 \
+  --rank 32 --alpha 32 --lr 1e-4 \
+  --steps 2000 --save-every 250 --eval-every 100 \
+  --eval-holdout 5 --eval-samples 8 --seed 2002 \
+  --sample-every 250 --sample-seconds 30 \
+  --out maqam_acoustic_v2 2>&1 | tee -a /content/logs/train.log
+```
+
+README guidance: rank 32, strength 1.0–1.5, **1000–3000 steps**; a LoRA that
+muffles/noises the render is over-trained. `--sample-every` renders a fixed
+30 s stream with the LoRA under training so you can hear each checkpoint.
+
+## 7. Evaluation — audio, not loss
+
+- **First fix the generation-side `cfg_scale` gap** (context.md §15): the
+  ComfyUI `YuE2GenerateMusic` node never forwards `cfg_scale`, so every ComfyUI
+  render so far ran on an unverified default, not the `1.2` the known-good
+  baseline used. This applies **with the LoRA off**, so it must be fixed before
+  any A/B is trustworthy. Either patch the node to accept/forward `cfg_scale`
+  (the underlying `generate_music()` already supports it) or render through a
+  small script that calls `generate_music()`/`generate_abc()` directly with
+  `cfg_scale=1.2` and `max_duration=400` (the user's 6-minute ceiling).
+- Judge by ear against the base model at the same seed — specifically
+  pronunciation (ق/ح/خ), "genuineness," and whether the maqam actually appears
+  instead of the base model's Western-minor default. **Do not** judge by the
+  loss curve; it plateaus while the LoRA keeps changing.
+- Stack the two LoRAs for the final check: planner on the CLIP path, acoustic
+  on the MODEL path.
+
+## 8. Open decisions / risks
+
+- **Tokenizer accuracy is approximate** (~16% exact top-1). The planner learns
+  from near-miss tokens; that is the current ceiling, not a bug to fix.
+- **Two sources disagree on the NAR companion LoRA.** Nora ships one; speedyrulz
+  measured it makes renders *less* similar and does not use it. If Stage 3
+  underdelivers, A/B her `nar_lora_joint_v4` rather than assuming.
+- **No community validation on Arabic/maqam.** Nobody has proven this on
+  melismatic Arabic. We are early adopters; the smoke test in §4 is the guard.
+- `status`-field check (context.md §5) and `--max-per-song` capping — still
+  open, low priority.
+- Corpus drift: re-run `verify_dataset.py --dataset-root ...` before trusting
+  the counts above.
+
+## 9. What NOT to do
+
+- **Do not repeat the 1500-step `--conditioning compact` acoustic run.** It is
+  a known near-no-op and structural dead end for the goal.
+- **Do not trust the old `PLAN.md` or the ai-toolkit PR-#1042 claim** — it was
+  fabricated and is resolved (context.md §2).
+- **Do not use `Starnodes2024/ComfyUI-YuE2-Trainer`** — its own issue reports a
+  trained LoRA with no effect at all.
+- **Do not start, stop, or resume training from a session** — the user runs
+  every command; sessions stage commands and read logs/checkpoints.
