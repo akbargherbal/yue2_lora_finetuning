@@ -23,6 +23,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMFY="$REPO_ROOT/ComfyUI"
 STAGING="/content/staging"
 
+# Pin both external repos. ComfyUI at the commit the cfg_scale patch applies
+# against; the trainer at the commit this project was verified on. Tracking
+# HEAD here previously meant a silent quality regression whenever upstream
+# changed -- now the patch step hard-fails instead.
+COMFY_COMMIT="36da3ff763687eab86a35e1019995dd1fb369b0d"
+TRAINER_COMMIT="544c0010bdddef14e298de1d4555558aa848451f"
+
 echo "=== $(date) — yue2 bootstrap starting ==="
 
 # --- Fast, synchronous: credentials everything else depends on ---
@@ -68,6 +75,8 @@ start_job dataset \
 start_job comfyui \
   bash -c 'if [ ! -f "'"$COMFY"'/main.py" ]; then rm -rf "'"$COMFY"'" && \
              git clone https://github.com/comfyanonymous/ComfyUI.git "'"$COMFY"'"; fi && \
+           git -C "'"$COMFY"'" fetch --quiet --all --tags && \
+           git -C "'"$COMFY"'" checkout --quiet "'"$COMFY_COMMIT"'" && \
            cd "'"$COMFY"'" && pip install -q -r requirements.txt'
 
 echo "Launched in parallel: ${names[*]}"
@@ -98,16 +107,19 @@ else
   echo "[WARN] staged tokenizer head not found — tokenizer job failed, see /content/logs/tokenizer.log"
 fi
 
-# --- cfg_scale generation fix (context.md §15): the YuE2 generation nodes never
-# forwarded text-guidance scale. Committed as a patch so a fresh clone gets it;
-# idempotent so re-running the bootstrap (or an upstream that already fixed it)
-# is a no-op rather than an error.
+# --- cfg_scale generation fix (docs/architecture.md §7): the YuE2 generation
+# nodes never forwarded text-guidance scale. Committed as a patch so a fresh
+# clone gets it; idempotent so re-running the bootstrap (or an upstream that
+# already fixed it) is a no-op rather than an error. ComfyUI is pinned to the
+# commit this patch applies against, so a failure here is a real error, not a
+# warning: renders would silently lose cfg_scale.
 if git -C "$COMFY" apply --reverse --check "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" 2>/dev/null; then
   echo "[ok]   cfg_scale node patch already applied"
 elif git -C "$COMFY" apply --check "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" 2>/dev/null; then
   git -C "$COMFY" apply "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" && echo "[ok]   applied cfg_scale node patch"
 else
-  echo "[WARN] cfg_scale node patch did not apply — nodes_yue2.py changed upstream; renders may ignore cfg_scale"
+  echo "[FAIL] cfg_scale node patch did not apply against ComfyUI $COMFY_COMMIT — nodes_yue2.py is not what the patch expects"
+  fail=1
 fi
 
 # --- Trainer install: the one real dependency (needs ComfyUI/custom_nodes/) ---
@@ -118,6 +130,7 @@ if [ ! -d ComfyUI-YuE2-Trainer ]; then
   git clone https://github.com/speedyrulz/ComfyUI-YuE2-Trainer.git
 fi
 cd ComfyUI-YuE2-Trainer
+git fetch --quiet --all --tags && git checkout --quiet "$TRAINER_COMMIT"
 pip install -q -r requirements.txt
 
 # --- Verify what actually landed, don't just trust exit codes ---

@@ -29,6 +29,14 @@ a single short fact) can stay in chat.
 - Run anything GPU-heavy while a run might be active — check `nvidia-smi`
   first. One GPU, shared.
 
+## Repo docs & checks
+- Durable design/reference: `docs/architecture.md`. Open problems with
+  statuses: `docs/known-issues.md`. Current state/next steps: `context.md`.
+- **Canonical commands:** training in `PLAN.md`, generation in `MANUAL.md`.
+  Don't re-paste them elsewhere — link.
+- Checks (fast, no GPU): `pytest` and `ruff check .` (config in
+  `pyproject.toml`). Run both after changing Python.
+
 ## Where to look before answering "what's going on"
 - Training log: `/content/logs/train.log` (the trainer command tees here;
   bootstrap per-job logs are `/content/logs/{setup,checkpoint,comfyui,dataset}.log`).

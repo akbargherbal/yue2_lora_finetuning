@@ -6,3 +6,11 @@ __pycache__
 
 .vevn
 **/.venv/*
+
+# Per-turn scratch (overwritten every turn, not a stable reference). Kept on
+# disk and mirrored to GCS by backup_to_gcp.py, but not version-controlled.
+agent_notes/current.md
+
+# pytest / ruff
+.pytest_cache/
+.ruff_cache/

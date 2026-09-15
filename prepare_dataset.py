@@ -273,8 +273,8 @@ def render_captions(tracks: list[Track], include_mood: bool, keep_header: bool) 
             # code fences, and control-token header entirely.
             field_prefixes = ("genre:", "vocals:", "production:", "instrumentation:", "mood:")
             body_lines = [
-                l for l in prompt_block.splitlines()
-                if l.startswith(field_prefixes)
+                line for line in prompt_block.splitlines()
+                if line.startswith(field_prefixes)
             ]
             t.caption = "\n".join(body_lines).strip()
 
@@ -291,7 +291,7 @@ def split_train_val(tracks: list[Track], val_fraction: float, seed: int) -> tupl
         groups_by_maqam[maqam].append(group_key)
 
     val_groups: set[str] = set()
-    for maqam, group_keys in groups_by_maqam.items():
+    for _maqam, group_keys in groups_by_maqam.items():
         rng.shuffle(group_keys)
         n_val = max(1, round(len(group_keys) * val_fraction)) if group_keys else 0
         val_groups.update(group_keys[:n_val])
@@ -395,8 +395,19 @@ def main():
                               "all bracketed tags. The Suno UI marker (e.g. '///***///') "
                               "is always removed regardless of mode.")
     parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument("--clean", action="store_true",
+                         help="Wipe <out-dir>/train and <out-dir>/val before writing. Recommended "
+                              "for every non-dry-run rebuild: poem_id is assigned by first-seen order, "
+                              "so deleting a poem's last take can shift later ids and orphan old files.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if args.clean and not args.dry_run:
+        for split in ("train", "val"):
+            stale = args.out_dir / split
+            if stale.is_dir():
+                shutil.rmtree(stale)
+                print(f"[clean] removed {stale}")
 
     tracks = walk_corpus(args.dataset_root)
     print(f"\nResolved {len(tracks)} kept (4-5*) tracks across "

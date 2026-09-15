@@ -31,7 +31,8 @@ kill $(pgrep -f "main.py --listen 127.0.0.1 --port 8188")
 ```
 
 ### Check the `cfg_scale` fix is present
-Generation quality depends on it (context.md §15/§17). It must print two hits:
+Generation quality depends on it (`docs/architecture.md` §7). It must print
+two hits:
 ```bash
 grep -n cfg_scale ComfyUI/comfy_extras/nodes_yue2.py
 ```
@@ -150,7 +151,8 @@ python render_tokens_nar.py \
 ```
 The NAR companion is **not a plain LoRA** — the script folds its `vae2llm`/
 `llm2vae` replacement weights and its rank-32 deltas into ComfyUI's merged NAR
-layers. See context.md §17.
+layers. See `docs/known-issues.md` (KI-05) and
+`agent_notes/sessions/session-07.md`.
 
 ---
 
@@ -172,22 +174,13 @@ acoustic LoRA node on the MODEL path).
 
 ## 7. Training (brief; full plan in `PLAN.md`)
 
-```bash
-# Stage 2 — planner LoRA on semantic tokens
-python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
-  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
-  --checkpoint yue2_3b_bf16.safetensors --data /content/data/dataset \
-  --semantic-head tokenizer_head_joint_v4.pt \
-  --semantic --no-abc --abc-dropout 0.5 --kl-weight 0.5 --max-tokens 4096 \
-  --rank 32 --alpha 32 --lr 5e-5 --lr-schedule cosine \
-  --steps 100 --save-every 10 --eval-every 10 \
-  --eval-holdout 5 --eval-samples 8 --seed 2002 \
-  --probe-every 10 --probe-max-tokens 8192 \
-  --out maqam_planner_v1 2>&1 | tee -a /content/logs/train.log
-```
-Extend from a checkpoint: same command +
-`--existing-lora maqam_planner_v1_000100.safetensors` (total `--steps`).
-Exact Stage-1 (tokenize) and Stage-3 (acoustic) commands: `PLAN.md` §§4–6.
+**`PLAN.md` is the canonical home for training commands.** Don't duplicate them
+here — stage bootstrap and tokenize (§4), planner LoRA (§5), and acoustic LoRA
+(§6) are kept current in that file.
+
+To extend an existing planner checkpoint, use the Stage-2 command from
+`PLAN.md` §5 plus `--existing-lora maqam_planner_v1_000100.safetensors` (with
+`--steps` as the run's **total** length).
 
 ---
 

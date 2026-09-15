@@ -2,26 +2,34 @@
 
 > **Rewritten from scratch, session 6.** The previous `PLAN.md` was a
 > dataset-prep plan whose §0 rested on the fabricated "ai-toolkit supports
-> YuE2 (PR #1042)" claim (see `context.md` §2) — it is superseded, not
-> amended. This file is the forward-looking plan for what to do **when we move
-> to Colab and start fine-tuning**. Read `context.md` first for the full
-> history; this is the action plan.
+> YuE2 (PR #1042)" claim (see `docs/architecture.md` §5) — it is superseded,
+> not amended. This file is the forward-looking plan and the **canonical home
+> for training commands**; `MANUAL.md` is canonical for generation commands.
+> Read `context.md` (current state) first; design reference and history live in
+> `docs/architecture.md` and `agent_notes/sessions/`.
+>
+> **License:** YuE2's weights and the community semantic-tokenizer head are
+> both **CC BY-NC 4.0 (non-commercial)**. The trained LoRA inherits that
+> constraint.
 
 ## 0. Where we are
 
 - **Dataset: done and verified.** `/content/data/dataset/` = 256 tracks (238
   train / 18 val), uniform 48 kHz stereo MP3, 18.0 h total, poem-safe split,
   `manifest.csv` cross-checked. `prepare_dataset.py` / `verify_dataset.py`
-  own it. No audio cleanup or segmentation is needed (context.md §6).
+  own it. No audio cleanup or segmentation is needed (`docs/architecture.md`
+  §3/§6).
 - **Backend: installed and sane.** `speedyrulz/ComfyUI-YuE2-Trainer` +
   `yue2_3b_bf16.safetensors`. Its own tests check the training forward matches
   ComfyUI inference (cosine 0.9999) and that LoRA keys load with zero
   unmatched keys.
 - **One acoustic run happened and it told us something:** 1500 steps,
   `--conditioning compact`, near-no-op (`waveform corr 0.946`). That was the
-  *wrong half* of the model in the *wrong conditioning mode* (context.md §14).
-  It is a smoke test, not a fine-tune, and it is not to be repeated as-is.
-- **The missing piece is found and already integrated** (context.md §16):
+  *wrong half* of the model in the *wrong conditioning mode*
+  (`agent_notes/sessions/session-04.md`). It is a smoke test, not a fine-tune,
+  and it is not to be repeated as-is.
+- **The missing piece is found and already integrated**
+  (`docs/architecture.md` §5, `agent_notes/sessions/session-06.md`):
   `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`, the audio →
   semantic-token encoder YuE2 never shipped. The trainer can run it
   (`--semantic-head`) to write `<song>.semantic.npy` for our own recordings.
@@ -100,7 +108,7 @@ python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
 ```
 
 `--eval-holdout 5 --seed 2002` is the leak-free held-out seed from session 4
-(context.md §11) — carry it into every run.
+(`docs/architecture.md` §6) — carry it into every run.
 
 **Smoke-test before trusting it:** tokenize 2–3 tracks, then render the token
 round-trip with the acoustic stage (the `yue2_render_tokens_api.json` workflow,
@@ -176,7 +184,8 @@ muffles/noises the render is over-trained. `--sample-every` renders a fixed
 
 ## 7. Evaluation — audio, not loss
 
-- **First fix the generation-side `cfg_scale` gap** (context.md §15): the
+- **First fix the generation-side `cfg_scale` gap** (`docs/architecture.md` §7,
+  `agent_notes/sessions/session-05.md`): the
   ComfyUI `YuE2GenerateMusic` node never forwards `cfg_scale`, so every ComfyUI
   render so far ran on an unverified default, not the `1.2` the known-good
   baseline used. This applies **with the LoRA off**, so it must be fixed before
@@ -200,7 +209,7 @@ muffles/noises the render is over-trained. `--sample-every` renders a fixed
   underdelivers, A/B her `nar_lora_joint_v4` rather than assuming.
 - **No community validation on Arabic/maqam.** Nobody has proven this on
   melismatic Arabic. We are early adopters; the smoke test in §4 is the guard.
-- `status`-field check (context.md §5) and `--max-per-song` capping — still
+- `status`-field check (KI-01) and `--max-per-song` capping (KI-02) — still
   open, low priority.
 - Corpus drift: re-run `verify_dataset.py --dataset-root ...` before trusting
   the counts above.
@@ -210,7 +219,7 @@ muffles/noises the render is over-trained. `--sample-every` renders a fixed
 - **Do not repeat the 1500-step `--conditioning compact` acoustic run.** It is
   a known near-no-op and structural dead end for the goal.
 - **Do not trust the old `PLAN.md` or the ai-toolkit PR-#1042 claim** — it was
-  fabricated and is resolved (context.md §2).
+  fabricated and is resolved (`docs/architecture.md` §5).
 - **Do not use `Starnodes2024/ComfyUI-YuE2-Trainer`** — its own issue reports a
   trained LoRA with no effect at all.
 - **Do not start, stop, or resume training from a session** — the user runs
