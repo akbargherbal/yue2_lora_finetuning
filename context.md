@@ -9,6 +9,16 @@
 > session can also clone/browse the repo, still prefer that over trusting
 > this file blindly — it can go stale the moment someone edits outside a
 > session with me.
+>
+> **Session 3 lesson, applies to reading this whole file:** two claims here
+> were wrong at the same time — one about the repo's own contents (§4 said
+> a committed file was missing) and one about the outside world (§2's
+> ai-toolkit PR #1042, apparently fabricated by a session and then carried
+> forward as "doubtful" rather than checked). Both were resolvable in under
+> five minutes against a primary source. **When this file marks something
+> as uncertain, resolve it — don't restate the uncertainty.** And check
+> `git log` before believing anything this file says about what's
+> committed.
 
 ## 1. The goal
 
@@ -29,18 +39,30 @@ backend (§8) and mapping the dataset onto whatever that backend expects.
   with Suno v5/v6 on the team's own WildSongBench (best-of-8 SongBench avg
   6.9632 vs Suno v5's 6.8721). Upstream repo:
   `github.com/multimodal-art-projection/YuE`.
-- **`ostris/ai-toolkit`** — `context.md` from an earlier session claimed this
-  merged YuE2 LoRA support in PR #1042 (Sep 14 2026). **This is now in
-  doubt**: a RunComfy documentation page for ai-toolkit, found this session,
-  states outright that ai-toolkit "does not handle language or audio
-  models; everything it supports is ... a diffusion model." That page may
-  simply predate PR #1042, or the PR-#1042 claim may have been wrong to
-  begin with — **unresolved, don't trust either claim without re-checking
-  ai-toolkit's actual current model list before using it.**
-- **`speedyrulz/ComfyUI-YuE2-Trainer`** — concretely documented, benchmarked,
-  and (unlike the ai-toolkit claim) actually verified this session by
-  reading its real README. This is the best-evidenced backend candidate
-  right now. Key facts that will matter for setup:
+- **`ostris/ai-toolkit` — RULED OUT (session 3, resolved).** An earlier
+  session claimed this merged YuE2 LoRA support in PR #1042 (Sep 14 2026).
+  Session 2 downgraded that to "in doubt" after finding a RunComfy doc page
+  saying ai-toolkit handles no audio models at all. Session 3 checked the
+  primary source and both claims are wrong in different directions:
+  - ai-toolkit's live README **does** now have an `### Audio` section, so
+    the RunComfy "no audio models" line is simply outdated. Don't reuse it
+    as evidence for anything.
+  - But the only audio models listed are **ACE-Step 1.5 and ACE-Step 1.5
+    XL**. **YuE2 is not in the supported-model list**, and a GitHub
+    issue/PR search for "YuE" across `ostris/ai-toolkit` returns **zero**
+    results — so PR #1042 is not a YuE2 PR.
+  - **Conclusion: ai-toolkit cannot train YuE2. Stop considering it.**
+  - **Process note worth keeping:** the PR-#1042 claim was almost certainly
+    fabricated by a session and then survived two `context.md` rewrites,
+    getting *softer* ("in doubt") rather than *checked*. When this file
+    records a claim as doubtful, resolve it against the primary source
+    rather than carrying the doubt forward again.
+- **`speedyrulz/ComfyUI-YuE2-Trainer` — the backend, by elimination
+  (session 3).** Verified twice now: session 2 read its real README,
+  session 3 independently re-confirmed the core architecture claim (it
+  trains YuE2 LoRAs for both the acoustic MODEL and the planner CLIP inside
+  ComfyUI; planner training is causal next-token cross-entropy over the AR
+  path with chunked logits). Key facts that will matter for setup:
   - Trains **two separate LoRAs** from the same checkpoint: an **acoustic**
     LoRA (NAR flow-matching path, VAE latents of the audio) and a
     **planner** LoRA (AR language model, `style + lyrics -> ABC score`,
@@ -72,7 +94,20 @@ backend (§8) and mapping the dataset onto whatever that backend expects.
     project with a confusingly similar name; the speedyrulz README's own
     benchmark found it performed slightly worse (CLAP similarity -0.004 vs.
     base, vs. speedyrulz's own +0.014/+0.016) and needs more VRAM (24GB vs.
-    16GB). Not independently verified beyond that one benchmark table.
+    16GB). **Second, independent datapoint found session 3:** its issue #1
+    (opened Sep 14 2026) reports a trained LoRA having *no effect at all* —
+    identical output with and without the LoRA loader, tested at strengths
+    0.0/1.0/2.0 across two different LoRA files. That corroborates the
+    ~zero CLAP delta rather than it being a rival author's biased table.
+    **Don't use the Starnodes2024 fork.**
+- **`t8star/YuE2-Comfy` (HuggingFace) — unexplored lead for the ABC
+  problem, found session 3.** A ComfyUI package that bundles SheetSage2 and
+  MERT alongside an assistant that generates lyrics, style, and *optional
+  ABC*. Might shortcut the planner-LoRA score-generation blocker (§8),
+  might be useless here. **Nothing about it has been verified** beyond the
+  page saying so — no Arabic/melismatic fit test, and no check of whether
+  its ABC output matches the format speedyrulz's planner trainer expects.
+  Treat as a lead, not a solution.
 - The user separately appears to have an earlier/adjacent repo,
   `akbargherbal/fine_tuning_ai_music_lora`, testing raw YuE2-3B *inference*
   (no fine-tuning). Relationship to this repo still unconfirmed — ask if
@@ -120,12 +155,12 @@ Suno prompt block. Key points:
   manifests, and keeps the caption vocabulary closed rather than
   reintroducing generated variation.
 
-**This file is still not committed to the repo.** `prepare_dataset.py`
-hard-imports it (`from maqam_prompt_generator import MAQAMS, build_prompt`)
-and raises on failure, so a fresh clone of this repo currently cannot run
-the script at all. It's presumably sitting locally next to the corpus on
-the user's machine. **Get it committed** — flagged repeatedly across
-sessions now, still not done.
+**This file IS now committed** (verified session 3 — it landed in commit
+`3623aef`, "Session 2", alongside `verify_dataset.py`). Earlier versions of
+this document flagged it as missing and as blocking a fresh clone; that is
+no longer true. `prepare_dataset.py` hard-imports it
+(`from maqam_prompt_generator import MAQAMS, build_prompt`) and raises on
+failure, so this mattered — but a fresh clone can now run the script.
 
 ## 5. The corpus — directory layout and what it actually means
 
@@ -318,8 +353,8 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 7. Files that should exist in the repo
 
-- `maqam_prompt_generator.py` — **still missing, see §4.** Blocks a fresh
-  clone from running `prepare_dataset.py` at all.
+- `maqam_prompt_generator.py` — **committed as of `3623aef`, see §4.**
+  No longer blocks a fresh clone.
 - `PLAN.md` — original written dataset-prep plan. Mostly executed now;
   §2 (audio cleanup) turned out to be unnecessary rather than done (§6),
   §4 (symbolic score) is still open and now tied to the planner-LoRA
@@ -330,15 +365,31 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 8. Explicitly NOT done yet — don't assume decisions were made
 
-- **Training backend.** Still undecided. `speedyrulz/ComfyUI-YuE2-Trainer`
-  is the best-evidenced candidate found so far (§2), but nothing has been
-  installed or run. The `ai-toolkit` YuE2-support claim from an earlier
-  session is now in doubt and needs re-checking before relying on it.
-- **Planner vs. acoustic LoRA.** Not yet decided which (or both) to train.
-  **Important:** acoustic-only will NOT give maqam control (§2) — if the
-  user's goal includes the model actually writing in different maqams
-  (not just sounding like the album), the planner LoRA is required, which
-  in turn requires ABC scores per track (see next point).
+- **Training backend — DECIDED session 3: `speedyrulz/ComfyUI-YuE2-Trainer`,
+  by elimination.** ai-toolkit is ruled out (§2, resolved against the
+  primary source). Nothing has been installed or run yet, so setup is still
+  entirely ahead of us — but the *choice* is no longer open, and re-opening
+  it would mean finding a fourth candidate, not revisiting ai-toolkit.
+- **Planner vs. acoustic LoRA — reframed session 3: it's an ordering
+  question, not a fork.** Earlier versions of this file posed these as
+  alternatives. They aren't, because the project's goal splits cleanly
+  along the same seam the two LoRAs do:
+  - The style template is *fixed* across all 256 tracks (one
+    `INSTRUMENTATION`/`PRODUCTION` block, deep male Arabic vocals,
+    concert-hall acoustics). That whole half of the "winning style" is
+    timbre and production — **exactly what the acoustic LoRA captures.**
+  - The maqam is a melodic mode — composition — which the acoustic LoRA
+    provably will not touch (§2: 0.88–0.91 waveform correlation with the
+    base render, "the same song, re-recorded"). **Maqam control requires
+    the planner LoRA.**
+  - So both are wanted eventually. The order is forced by what's blocked:
+    **acoustic is unblocked right now** (dataset built and verified 0/0,
+    sidecar naming already matches the trainer's convention, uniform 48kHz
+    stereo, random-crop handles our 370s max — plausibly a direct
+    drop-in), while **planner is blocked on ABC scores** (next point).
+  - **Recommended order: acoustic first**, which also validates the whole
+    pipeline end-to-end on real data before sinking effort into
+    transcription. Not yet ratified by the user.
 - **Symbolic score / ABC transcription** for the planner LoRA path.
   SheetSage2's fixed 300s window is a mismatch for some of our tracks
   (median 253s, max 370s) and its fit for melismatic Arabic vocal lines is
@@ -346,8 +397,8 @@ failure mode and doesn't false-positive on the clean case.
   decision if the planner LoRA is wanted, not an optional side-quest.
 - **`--max-per-song` capping** — leaning no-cap, not finalized.
 - **`status` field investigation** — see §5, quick check not yet run.
-- **`maqam_prompt_generator.py` commit** — see §4 and §7.
-- No LoRA training of any kind has been run.
+- No LoRA training of any kind has been run. This remains true after
+  session 3 — session 3 was research and bookkeeping only, no code changed.
 
 ## 9. User context
 
@@ -367,20 +418,34 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 10. Suggested first steps for next session
 
-1. Confirm `maqam_prompt_generator.py` got committed (§4/§7) — if not, get
-   it in before doing anything else that touches the script.
-2. Run the `status`-field check from §5 if it still hasn't happened. Low
-   effort, resolves a real ambiguity in the filtering logic.
-3. Decide planner-vs-acoustic (§8) **before** picking a backend setup path —
-   this determines whether ABC-score generation is a prerequisite.
-4. If the planner LoRA is wanted: figure out ABC score generation for the
-   corpus (SheetSage2 vs. hand-authored vs. accepting the 300s-window
-   limitation) — this is genuinely unexplored territory, don't assume an
-   answer.
-5. Re-verify the ai-toolkit YuE2-support claim before choosing it as the
-   backend, given the direct contradiction found this session (§2).
-6. Once a backend is chosen: map `dataset/train`/`dataset/val` (with its
-   `.style.txt`/`.lyrics.txt` sidecars) onto whatever that backend's node/
-   CLI actually expects — for `speedyrulz/ComfyUI-YuE2-Trainer` specifically,
-   the sidecar naming already matches its convention (§6), so this may be
-   close to a direct drop-in, but hasn't been tried.
+Steps 1, 3 and 5 of the previous version of this list are **done** — the
+generator is committed (§4), ai-toolkit is ruled out and the backend is
+settled (§2/§8), and planner-vs-acoustic has been reframed as an ordering
+with a recommendation (§8). What's left:
+
+1. **Ratify "acoustic first" with the user** (§8) if not already done. This
+   gates everything below.
+2. **Stand up `speedyrulz/ComfyUI-YuE2-Trainer` and train the acoustic
+   LoRA.** Map `dataset/train` / `dataset/val` (with its
+   `.style.txt`/`.lyrics.txt` sidecars) onto what its nodes/CLI actually
+   expect. The sidecar naming already matches its convention (§6), so this
+   may be close to a direct drop-in — **but that has never been tried, so
+   don't write it up as if it worked until it has run.** This will be the
+   first LoRA training of any kind in this project.
+3. **Evaluate the acoustic LoRA honestly.** Expect "same composition, our
+   production" — per §2 that's the *designed* behaviour, not a failure.
+   Judging it by whether maqams changed would be judging it by the thing it
+   structurally cannot do.
+4. **ABC score generation for the planner LoRA** — still the one genuinely
+   unexplored blocker. Options: SheetSage2 (300s window vs. our 253s
+   median / 370s max), the `t8star/YuE2-Comfy` bundle (§2, unverified),
+   or hand-authored scores. Don't assume an answer; nobody has tested any
+   of these against melismatic Arabic vocal lines.
+5. **Run the `status`-field check from §5** — low effort, resolves a real
+   ambiguity in the filtering logic, independent of everything above. Can
+   be done any time the user is at the corpus machine.
+6. **`--max-per-song` capping** — still leaning no-cap, still not decided.
+
+Note the corpus can drift between sessions (the user deletes tracks by ear).
+`verify_dataset.py --dataset-root ...` detects this; re-run it before
+trusting the §5 numbers.
