@@ -251,11 +251,26 @@ def ascii_safe_slug(text: str, max_len: int = 40) -> str:
 
 def write_split(tracks: list[Track], out_dir: Path, dry_run: bool) -> list[dict]:
     rows = []
+    # BUGFIX: ascii_safe_slug(original_title) strips all Arabic characters,
+    # so unrelated poems whose titles happen to share a leading number (or
+    # have no digit at all) were collapsing onto the same slug -- e.g. both
+    # "01-الوداع-..." and "01-عزة-الفارس-..." became just "01". That made
+    # dest_audio collide across different poems, and shutil.copy2() below
+    # silently overwrote earlier files with later ones. Assigning each
+    # distinct group_key its own sequential, ASCII-safe poem_id guarantees
+    # a unique destination filename regardless of what survives ASCII
+    # stripping.
+    poem_ids: dict[str, int] = {}
+    next_poem_id = 1
     group_counters: dict[str, int] = defaultdict(int)
-    for t in sorted(tracks, key=lambda t: (t.group_key, t.clip_id)):
+    for t in sorted(tracks, key=lambda t: (t.maqam, t.group_key, t.clip_id)):
+        if t.group_key not in poem_ids:
+            poem_ids[t.group_key] = next_poem_id
+            next_poem_id += 1
         group_counters[t.group_key] += 1
         take_no = group_counters[t.group_key]
-        base = f"{t.maqam.lower()}_{ascii_safe_slug(t.original_title)}_take{take_no:02d}"
+        slug = ascii_safe_slug(t.original_title)
+        base = f"{t.maqam.lower()}_{poem_ids[t.group_key]:04d}_{slug}_take{take_no:02d}"
         dest_audio = out_dir / f"{base}{t.audio_path.suffix}"
         dest_caption = out_dir / f"{base}.txt"
 
