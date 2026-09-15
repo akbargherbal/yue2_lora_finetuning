@@ -90,10 +90,12 @@ class Track:
     original_title: str
     audio_path: Path
     styles: str
+    lyrics: str
     start_phrase: str | None
     mood: str | None
     group_key: str = field(default="")
     caption: str | None = None
+    lyrics_clean: str | None = None
 
 
 def extract_caption_maqam(styles: str) -> str | None:
@@ -111,6 +113,63 @@ def extract_start_phrase(styles: str) -> str | None:
 def extract_mood(styles: str) -> str | None:
     m = re.search(r'mood:\s*"([^"]+)"', styles)
     return m.group(1) if m else None
+
+
+SECTION_WORDS = (
+    "intro", "verse", "chorus", "pre-chorus", "prechorus", "bridge", "outro",
+    "hook", "refrain", "interlude", "breakdown", "coda", "tag", "instrumental",
+)
+_TAG_RE = re.compile(r"^\[(?P<body>[^\]]*)\]\s*$")
+
+
+def clean_lyrics(raw: str, mode: str) -> str:
+    """Turn a raw Suno-style lyrics block into a training-ready lyrics sidecar.
+
+    mode:
+      "strip"    - drop every bracketed tag, keep only sung lines.
+      "full"     - keep every bracketed tag exactly as written.
+      "simplify" - collapse a structural tag like
+                   "[Verse 1 | epic soaring vocals | heavy power chords]"
+                   down to "[Verse 1]", and drop non-structural inline
+                   production cues like "[guitars surge - Ajam]" entirely
+                   (recognized by whether the label before the first "|"
+                   names a known song section, ignoring digits).
+    Unconditionally drops Suno UI marker lines (runs of only "/" and "*",
+    e.g. "///***///") regardless of mode -- that's never lyric content.
+    """
+    if not raw:
+        return ""
+    out: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            continue
+        if set(stripped) <= set("/*"):
+            continue  # Suno UI marker, e.g. ///***///
+        m = _TAG_RE.match(stripped)
+        if m:
+            if mode == "strip":
+                continue
+            if mode == "full":
+                out.append(f"[{m.group('body')}]")
+                continue
+            # simplify
+            label = m.group("body").split("|")[0].strip()
+            label_key = re.sub(r"\d+", "", label).strip().lower()
+            if label_key in SECTION_WORDS:
+                out.append(f"[{label}]")
+            # else: non-structural cue (e.g. "guitars surge - Ajam"), drop
+            continue
+        out.append(stripped)
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip("\n")
+    return text
+
+
+def render_lyrics(tracks: list[Track], tag_mode: str) -> None:
+    for t in tracks:
+        t.lyrics_clean = clean_lyrics(t.lyrics, tag_mode)
 
 
 def find_local_audio(workspace_dir: Path, assigned_filename: str) -> Path | None:
@@ -166,6 +225,7 @@ def walk_corpus(dataset_root: Path) -> list[Track]:
                     original_title=rt["original_title"],
                     audio_path=audio_path,
                     styles=styles,
+                    lyrics=rt.get("lyrics", ""),
                     start_phrase=extract_start_phrase(styles),
                     mood=extract_mood(styles),
                 )
@@ -272,7 +332,12 @@ def write_split(tracks: list[Track], out_dir: Path, dry_run: bool) -> list[dict]
         slug = ascii_safe_slug(t.original_title)
         base = f"{t.maqam.lower()}_{poem_ids[t.group_key]:04d}_{slug}_take{take_no:02d}"
         dest_audio = out_dir / f"{base}{t.audio_path.suffix}"
-        dest_caption = out_dir / f"{base}.txt"
+        # NOTE: intentionally ".style.txt", not a bare ".txt". The ComfyUI
+        # YuE2 trainer treats "<stem>.txt" as the LYRICS sidecar (its own
+        # convention -- "track1.lyrics.txt (track1.txt also works)"), so a
+        # bare ".txt" here would make the style caption get read as lyrics.
+        dest_style = out_dir / f"{base}.style.txt"
+        dest_lyrics = out_dir / f"{base}.lyrics.txt"
 
         rows.append({
             "clip_id": t.clip_id,
@@ -283,14 +348,16 @@ def write_split(tracks: list[Track], out_dir: Path, dry_run: bool) -> list[dict]
             "take_no_in_group": take_no,
             "source_audio": str(t.audio_path),
             "dest_audio": str(dest_audio),
-            "dest_caption": str(dest_caption),
+            "dest_style": str(dest_style),
+            "dest_lyrics": str(dest_lyrics),
         })
 
         if dry_run:
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(t.audio_path, dest_audio)
-        dest_caption.write_text(t.caption, encoding="utf-8")
+        dest_style.write_text(t.caption, encoding="utf-8")
+        dest_lyrics.write_text(t.lyrics_clean or "", encoding="utf-8")
 
     return rows
 
@@ -318,6 +385,15 @@ def main():
                               "Default: no cap (keep every 4-5* take).")
     parser.add_argument("--include-mood", action="store_true")
     parser.add_argument("--keep-control-header", action="store_true")
+    parser.add_argument("--lyrics-tag-mode", choices=["simplify", "full", "strip"],
+                         default="simplify",
+                         help="How to handle bracketed section/production tags in the "
+                              "lyrics sidecar. 'simplify' (default) collapses e.g. "
+                              "'[Verse 1 | epic soaring vocals | ...]' to '[Verse 1]' and "
+                              "drops non-structural cues like '[guitars surge - Ajam]' "
+                              "entirely. 'full' keeps every tag verbatim. 'strip' removes "
+                              "all bracketed tags. The Suno UI marker (e.g. '///***///') "
+                              "is always removed regardless of mode.")
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -338,6 +414,7 @@ def main():
         print(f"\nAfter capping at {args.max_per_song} takes/poem: {len(tracks)} tracks.")
 
     render_captions(tracks, include_mood=args.include_mood, keep_header=args.keep_control_header)
+    render_lyrics(tracks, tag_mode=args.lyrics_tag_mode)
 
     train, val = split_train_val(tracks, args.val_fraction, args.seed)
     print(f"\nSplit: {len(train)} train / {len(val)} val tracks "
