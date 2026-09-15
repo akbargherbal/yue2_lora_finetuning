@@ -347,7 +347,7 @@ by hand (KI-20). Needs `gcloud`/`gsutil` auth to stay valid.
 | `bootstrap/setup.sh` | Colab bootstrap (pinned clones, downloads, patch) |
 | `bootstrap/yue2_cfg_scale.patch` | wires `cfg_scale` into the YuE2 nodes |
 | `tests/` | pytest suite + fixtures |
-| `quality_review.md` | the review this structure implements |
+| `docs/archive/` | historical process artifacts (e.g. the 2026-09 quality review) |
 
 ## 9. User context
 

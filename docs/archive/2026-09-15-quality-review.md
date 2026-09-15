@@ -1,5 +1,9 @@
 # Repo Quality Review — `yue2_lora_finetuning`
 
+> **Archived 2026-09-15 — implemented.** This review drove the repo-quality
+> pass in commit `8a5974c`. Kept for provenance only; see `CHANGELOG.md` for
+> what changed. Do not treat it as current documentation.
+
 Reviewed: `AGENTS.md`, `context.md`, `PLAN.md`, `MANUAL.md`, `agent_notes/current.md`,
 `bootstrap/setup.sh`, and all six Python scripts (`prepare_dataset.py`,
 `verify_dataset.py`, `maqam_prompt_generator.py`, `audition_planner.py`,

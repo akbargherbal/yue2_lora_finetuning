@@ -33,7 +33,8 @@ helper scripts and the `cfg_scale` patch.
 → [`agent_notes/sessions/session-07.md`](agent_notes/sessions/session-07.md)
 
 ## Docs / process refactor (post-session-7)
-Implemented `quality_review.md`: split the 1,100-line `context.md` into this
+Implemented the [2026-09 quality review](docs/archive/2026-09-15-quality-review.md):
+split the 1,100-line `context.md` into this
 changelog, per-session files, `docs/architecture.md`, and
 `docs/known-issues.md`; committed the test suite; pinned dependencies and both
 external repos; hardened `audition_planner.py`; de-duplicated run commands.
