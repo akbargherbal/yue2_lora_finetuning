@@ -19,6 +19,10 @@
 > as uncertain, resolve it — don't restate the uncertainty.** And check
 > `git log` before believing anything this file says about what's
 > committed.
+>
+> **Session 4 update:** the backend is installed and a dry run has passed; the
+> operational state, the checkpoint/resume/observability plan, and the GCS
+> backup script are in §11–13. §1, §7, §8, §9 and §10 were updated to match.
 
 ## 1. The goal
 
@@ -28,9 +32,12 @@ specific "winning" style: symphonic cinematic orchestral ballad / heavy rock,
 grand-concert-hall acoustics, deep male Arabic vocals, classical Arabic
 poetry as lyrics, in one of four Arabic maqams (Hijaz, Nahawand, Ajam, Kurd).
 
-**Dataset preparation is now complete and verified** (see §5–6). No LoRA
-training has been run yet. The open work is choosing/setting up a training
-backend (§8) and mapping the dataset onto whatever that backend expects.
+**Dataset preparation is complete and verified** (§5–6). The backend is now
+chosen *and installed* — `speedyrulz/ComfyUI-YuE2-Trainer` — and a 0-step acoustic
+"dry run" (scan → VAE-encode → LoRA build → eval → save) has passed on the real
+dataset. **No real training has been run yet**; the next action is the first
+actual acoustic run. Session 4 operational state is §11, the
+checkpoint/resume/observability plan is §12, and the GCS backup script is §13.
 
 ## 2. Background on the tools involved (verified via web search, Sep 2026)
 
@@ -359,17 +366,29 @@ failure mode and doesn't false-positive on the clean case.
   §2 (audio cleanup) turned out to be unnecessary rather than done (§6),
   §4 (symbolic score) is still open and now tied to the planner-LoRA
   decision (§2 above), not just an optional nice-to-have.
-- `prepare_dataset.py` — updated this session, see §6.
-- `verify_dataset.py` — **new this session**, see §6.
+- `prepare_dataset.py` — updated in session 2, see §6.
+- `verify_dataset.py` — new in session 2, see §6.
+- `bootstrap/setup.sh` — Colab bootstrap. **Fixed in session 4**: wrong
+  checkpoint path, a ComfyUI clone race, and a stray `cd`; it now runs cleanly
+  (see §11).
+- `backup_to_gcp.py` — **new session 4.** Mirrors `ComfyUI/models/loras/`,
+  `/content/logs/`, and `agent_notes/` to GCS every 25 min with `gsutil rsync`.
+  See §13.
+- `AGENTS.md` — its `PATH_HERE` placeholders were filled in session 4 with the
+  verified log/checkpoint/dataset/script locations.
+- `agent_notes/current.md` — the live per-session scratch/output file (rewritten
+  each turn, not a stable reference).
 - This file (`context.md`).
 
 ## 8. Explicitly NOT done yet — don't assume decisions were made
 
 - **Training backend — DECIDED session 3: `speedyrulz/ComfyUI-YuE2-Trainer`,
   by elimination.** ai-toolkit is ruled out (§2, resolved against the
-  primary source). Nothing has been installed or run yet, so setup is still
-  entirely ahead of us — but the *choice* is no longer open, and re-opening
-  it would mean finding a fourth candidate, not revisiting ai-toolkit.
+  primary source). **Session 4: it is now installed and verified** — ComfyUI
+  cloned, checkpoint downloaded (7,438 MB), trainer cloned with its requirements
+  installed, and the acoustic dry run passed on the real dataset (§11).
+  Re-opening the choice would mean finding a fourth candidate, not revisiting
+  ai-toolkit.
 - **Planner vs. acoustic LoRA — reframed session 3: it's an ordering
   question, not a fork.** Earlier versions of this file posed these as
   alternatives. They aren't, because the project's goal splits cleanly
@@ -389,7 +408,8 @@ failure mode and doesn't false-positive on the clean case.
     drop-in), while **planner is blocked on ABC scores** (next point).
   - **Recommended order: acoustic first**, which also validates the whole
     pipeline end-to-end on real data before sinking effort into
-    transcription. Not yet ratified by the user.
+    transcription. **Session 4: effectively ratified** — the user proceeded to
+    the acoustic dry run and is set to launch the real acoustic run (§11).
 - **Symbolic score / ABC transcription** for the planner LoRA path.
   SheetSage2's fixed 300s window is a mismatch for some of our tracks
   (median 253s, max 370s) and its fit for melismatic Arabic vocal lines is
@@ -397,8 +417,9 @@ failure mode and doesn't false-positive on the clean case.
   decision if the planner LoRA is wanted, not an optional side-quest.
 - **`--max-per-song` capping** — leaning no-cap, not finalized.
 - **`status` field investigation** — see §5, quick check not yet run.
-- No LoRA training of any kind has been run. This remains true after
-  session 3 — session 3 was research and bookkeeping only, no code changed.
+- **No real LoRA training has been run yet.** Session 4 got as far as a
+  successful 0-step `--dry-run` on the real dataset (scan/encode/eval/save all
+  work); see §11. Acoustic-first is now effectively ratified.
 
 ## 9. User context
 
@@ -411,27 +432,22 @@ failure mode and doesn't false-positive on the clean case.
   being handed over — building synthetic fixtures that reproduce real
   edge cases, and deliberately breaking them to confirm a checker catches
   the breakage, not just that it passes the happy path. Keep doing that.
-- Comfortable running git/shell commands themselves on their own machine
-  (Windows/PowerShell); Claude sessions typically only have a scratch clone,
-  not push access to the actual repo — hand off files + exact commands,
-  don't assume a session can commit on the user's behalf.
+- Comfortable running git/shell commands themselves (Windows/PowerShell). As of
+  session 4 the sandbox **does** have push access: the user installed a GitHub
+  token for `gh` (`gh auth login --with-token`, stored in
+  `/root/.config/gh/hosts.yml`), and session-4 work was pushed to `origin/main`
+  (`89ca4cf`). Never echo the token; the `gh` credential helper covers git.
 
 ## 10. Suggested first steps for next session
 
-Steps 1, 3 and 5 of the previous version of this list are **done** — the
-generator is committed (§4), ai-toolkit is ruled out and the backend is
-settled (§2/§8), and planner-vs-acoustic has been reframed as an ordering
-with a recommendation (§8). What's left:
+Session 4 did the previous steps 1–2 up to a passing dry run. What's left:
 
-1. **Ratify "acoustic first" with the user** (§8) if not already done. This
-   gates everything below.
-2. **Stand up `speedyrulz/ComfyUI-YuE2-Trainer` and train the acoustic
-   LoRA.** Map `dataset/train` / `dataset/val` (with its
-   `.style.txt`/`.lyrics.txt` sidecars) onto what its nodes/CLI actually
-   expect. The sidecar naming already matches its convention (§6), so this
-   may be close to a direct drop-in — **but that has never been tried, so
-   don't write it up as if it worked until it has run.** This will be the
-   first LoRA training of any kind in this project.
+1. **Run the first real acoustic training** (§11): the exact command is there;
+   the dry run already proved the data scan, VAE encode, eval and save paths.
+   Include `--save-every 50`. This will be the first real LoRA training of any
+   kind in this project.
+2. **Protect and watch it** — checkpoints/resume per §12, with
+   `backup_to_gcp.py` running in a second terminal per §13.
 3. **Evaluate the acoustic LoRA honestly.** Expect "same composition, our
    production" — per §2 that's the *designed* behaviour, not a failure.
    Judging it by whether maqams changed would be judging it by the thing it
@@ -449,3 +465,168 @@ with a recommendation (§8). What's left:
 Note the corpus can drift between sessions (the user deletes tracks by ear).
 `verify_dataset.py --dataset-root ...` detects this; re-run it before
 trusting the §5 numbers.
+
+## 11. Session 4 — setup done, dry run passed, first run staged
+
+### Setup glitches (fixed)
+The first `bootstrap/setup.sh` run failed three ways. All are fixed; the second
+run finished with all four parallel jobs `[ok]`.
+1. **Wrong checkpoint path.** `Comfy-Org/YuE2` has no root-level
+   `yue2_3b_bf16.safetensors` — it lives at
+   `checkpoints/yue2_3b_bf16.safetensors`. Fixed the `hf download` path.
+2. **ComfyUI clone race (two layers).** The checkpoint job's
+   `mkdir -p ComfyUI/models/checkpoints` created `ComfyUI/` before the parallel
+   clone job ran, so its `[ ! -d ComfyUI ]` guard skipped the clone; a fixed
+   guard would then still have failed to clone into a non-empty dir. Fixed by
+   downloading to `/content/staging` and moving the file in **after** the clone,
+   and by guarding on `ComfyUI/main.py` (removing a stale partial clone).
+3. **Stray `cd /content`** at the end made the post-install verification look at
+   wrong (relative) paths. Removed; every `ComfyUI/...` reference is now anchored
+   to the script's own repo root, so it runs from any CWD.
+
+Verified on disk: `ComfyUI/main.py`, the trainer's `train_cli.py` (speedyrulz
+repo), `ComfyUI/models/checkpoints/yue2_3b_bf16.safetensors` (7,438 MB), and
+`/content/data/dataset/` still 238 train / 18 val.
+
+### Dry run — passed on the real dataset
+Run as:
+```bash
+python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py acoustic \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --eval-holdout 5 --seed 2002 \
+  --segment-seconds 30 --steps 300 --out maqam_acoustic_v1 --dry-run
+```
+It completed in ~22 min, almost entirely the one-time VAE encode (256 tracks ×
+~5 s, now cached in `ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/cache/`). It
+loaded the checkpoint, built the LoRA (**112 modules, rank 16, alpha 16, 224
+tensors, 14.68 M trainable params**), ran the held-out eval at step 0 (loss
+1.0510), and saved a 0-step artifact set. **That saved
+`maqam_acoustic_v1.safetensors` is untrained — not a result;** the real run
+overwrites it.
+
+### The real run command (staged; the user launches it, never a session)
+```bash
+python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py acoustic \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --eval-holdout 5 --seed 2002 \
+  --segment-seconds 30 --steps 300 --save-every 50 \
+  --out maqam_acoustic_v1 2>&1 | tee -a /content/logs/train.log
+```
+Run from `/content/yue2_lora_finetuning`. Output lands in
+`ComfyUI/models/loras/`. `--save-every 50` is the crash-safety knob — see §12;
+it is in **steps**, not minutes.
+
+### Validation / leakage — solved without touching any files
+`Item.id` is the audio filename stem, so **each take is its own item**, and the
+trainer's `--eval-holdout N` holds out whole items chosen by
+`random.Random(seed + 4242).sample(sorted(ids), N)` — **not** by poem. On this
+corpus 76 of 136 poems have >1 surviving take, and **76.6% of tracks share their
+poem with another track**, so a random 1-item holdout almost always leaves a
+sibling take in training (leaky eval). The built `val/` split is poem-safe, but
+**the trainer has no flag to evaluate on a separate folder** — it only carves
+its holdout from `--data`.
+
+`scan_folder` walks `--data` recursively, so pointing `--data` at the *parent*
+`/content/data/dataset` transparently merges `train/` + `val/` into one 256-item
+set (all basenames unique) with **no file changes**. Then pick a `--seed` whose
+held-out items are all from **single-take poems** (those poems then vanish from
+training entirely → leak-free). Verified against `manifest.csv`:
+
+| `--eval-holdout` | example leak-free `--seed` |
+|---|---|
+| 1 | `4` |
+| 3 | `166` |
+| **5** | **`2002`** |
+
+Default `--seed 0` is **not** leak-free; no leak-free seed exists for holdout ≥ 8.
+Trade-off: the internal eval becomes N songs × `--eval-samples` fixed crops
+instead of the 18-track val — but that val could never have been fed to the
+trainer anyway. `val/` stays on disk for any separate, external evaluation.
+
+### Still open after session 4
+- **`status`-field check (§5)** — still not run: the raw corpus
+  (`min_4stars_ai_music/`) is not in this Colab VM, only the built `dataset/`.
+  Run it on whichever machine has the corpus.
+- **`--max-per-song` capping** — still undecided, still leaning no-cap.
+
+## 12. Checkpointing · resumability · observability (agreed session 4)
+
+### Checkpointing
+- `--save-every N` is in **optimizer steps** and defaults to **0 = no
+  intermediate saves**. Every N steps it writes, into `ComfyUI/models/loras/`:
+  `<out>_NNNNNN.safetensors` **and** `<out>_NNNNNN.resume`.
+- The `.resume` file is the resumable state: optimizer moments, every replica's
+  torch + Python RNG states, step count, and the **loss/eval history**.
+- The final `<out>.safetensors`, `<out>.loss.json` and `<out>.resume` are written
+  **only on a normal exit**. `--keep best_eval` (optional) makes the final file
+  the best-eval checkpoint instead of the last step; partials are unaffected.
+- Chosen setting: `--save-every 50` (matches `--eval-every 50`). Revisit once the
+  real seconds/step is known — target roughly 10–15 min between checkpoints.
+- Disk is not a constraint (177 GB free). A partial is ~28 MB of LoRA weights
+  plus the resume state (small at step 0, larger once Adam moments exist).
+
+### Resumability
+- Resume = **same command** plus `--existing-lora <last>.safetensors`, with the
+  same `--out`; `--steps` is the run's *total* length. It restores optimizer,
+  RNG, step and the loss/eval curves.
+- `rank`, `alpha`, `targets` and `optimizer` must match, or the state is ignored
+  with a warning and training restarts from the weights.
+- **Ctrl-C does not run the final save** — the `finally` block only cleans up
+  GPU state. So an interrupt leaves the last `--save-every` partial as the
+  resume point. `.resume` writes are atomic (tmp + rename); `.safetensors`
+  writes are not, so a crash mid-write can tear one partial — resume from the
+  previous one and verify with the trainer's `tests/verify_lora_file.py`.
+- The VAE-latent cache is keyed by path+size+mtime+flags, so resume/re-run skips
+  the ~20 min encode.
+
+### Observability
+- Sessions run **inside this same VM**. If the user launches training in another
+  terminal on this machine, a session can read `/content/logs/train.log`,
+  `ComfyUI/models/loras/*` and run `nvidia-smi`. If training runs on a different
+  machine, a session cannot see it — paste the log or copy the artifacts over.
+- This is **on-demand only**: no background watching, no notifications. `tee` to
+  `/content/logs/train.log` is what makes a run visible.
+- From those files: step/ETA, loss/avg/grad-norm, the held-out eval curve, which
+  checkpoints exist, process/GPU state, and the crash cause from the log tail.
+- Sessions never start, stop, or resume the training process.
+
+## 13. GCS backup — `backup_to_gcp.py` (new session 4)
+
+Run in a **second terminal** next to training. Every `--interval-minutes`
+(default **25**) it mirrors the recovery-critical folders to
+`gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/` with
+`gsutil -m rsync -r`:
+
+| local | remote | why |
+|---|---|---|
+| `ComfyUI/models/loras/` | `run_backup/loras/` | `.safetensors`, `.resume`, `.loss.json` |
+| `/content/logs/` | `run_backup/logs/` | `train.log` for crash diagnosis |
+| `agent_notes/` | `run_backup/agent_notes/` | the plan + exact commands |
+
+```bash
+cd /content/yue2_lora_finetuning
+python backup_to_gcp.py                    # every 25 min; first pass immediately
+python backup_to_gcp.py --include-cache    # also mirror the (regenerable) latent cache
+python backup_to_gcp.py --once             # single pass for cron
+```
+Safety: **append/update only — no `-d`, so it never deletes remotely**; a
+`--settle-seconds 60` guard on `loras/` avoids grabbing a file mid-write, and a
+torn upload self-heals on the next pass. It is read-only locally. Note it needs
+`gcloud`/`gsutil` auth (currently the user's account) to stay valid. Verified
+end-to-end: a real pass uploaded `logs/` and `agent_notes/` successfully (and
+gsutil honours only the **last** `-x`, so the excludes are combined into one
+alternation). The dataset is already in GCS and the checkpoint is on HF, so
+neither is mirrored.
+
+### Git state
+Session 4 changes are pushed: `origin/main` is `89ca4cf` (adds
+`backup_to_gcp.py` + `agent_notes/current.md`). The remote already had `91a9291`
+with byte-identical `AGENTS.md`/`setup.sh` edits, so those were not duplicated.
+Auth is `gh` with a stored user token; push uses
+`git -c credential.helper='!gh auth git-credential'` (no git-config change).
+`ComfyUI/` and `agent_notes/` remain untracked/volatile candidates for
+`.gitignore` if the churn becomes annoying.
