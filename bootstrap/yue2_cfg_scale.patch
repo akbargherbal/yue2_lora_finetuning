@@ -1,0 +1,44 @@
+diff --git a/comfy_extras/nodes_yue2.py b/comfy_extras/nodes_yue2.py
+index 5c2606cf..ea6a9619 100644
+--- a/comfy_extras/nodes_yue2.py
++++ b/comfy_extras/nodes_yue2.py
+@@ -26,13 +26,15 @@ class YuE2GenerateABC(io.ComfyNode):
+                 io.Int.Input("top_k", default=30, min=1, max=32768, advanced=True),
+                 io.Float.Input("repetition_penalty", default=1.005, min=0.01, max=10.0, step=0.005, advanced=True),
+                 io.Int.Input("penalty_window", default=100, min=1, max=20000, advanced=True, tooltip="Number of recent ABC tokens used to penalize repetition."),
++                io.Float.Input("cfg_scale", default=0.0, min=0.0, max=5.0, step=0.05, advanced=True, tooltip="Text-guidance scale. 0 uses the model default."),
+             ],
+             outputs=[io.String.Output(display_name="abc")],
+         )
+ 
+     @classmethod
+-    def execute(cls, clip, style, lyrics, seed, mode, max_abc_tokens, temperature=0.7, top_p=0.9, top_k=30, repetition_penalty=1.005, penalty_window=100):
+-        tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, seed=seed, max_tokens=max_abc_tokens, penalty_window=penalty_window)
++    def execute(cls, clip, style, lyrics, seed, mode, max_abc_tokens, temperature=0.7, top_p=0.9, top_k=30, repetition_penalty=1.005, penalty_window=100, cfg_scale=0.0):
++        guidance = {"cfg_scale": cfg_scale} if cfg_scale > 0 else {}
++        tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, seed=seed, max_tokens=max_abc_tokens, penalty_window=penalty_window, **guidance)
+         ids = clip.generate(tokens, max_length=max_abc_tokens, temperature=temperature, top_p=top_p, top_k=top_k,
+                             repetition_penalty=repetition_penalty, seed=seed)
+         return io.NodeOutput(clip.decode(ids))
+@@ -58,17 +60,19 @@ class YuE2GenerateMusic(io.ComfyNode):
+                 io.Float.Input("top_p", default=0.95, min=0.01, max=1.0, step=0.01, advanced=True),
+                 io.Int.Input("top_k", default=100, min=1, max=32768, advanced=True),
+                 io.Float.Input("repetition_penalty", default=1.2, min=0.01, max=10.0, step=0.01, advanced=True),
++                io.Float.Input("cfg_scale", default=0.0, min=0.0, max=5.0, step=0.05, advanced=True, tooltip="Text-guidance scale. 0 uses the model default."),
+             ],
+             outputs=[io.Conditioning.Output(), io.Float.Output(display_name="seconds")],
+         )
+ 
+     @classmethod
+-    def execute(cls, clip, style, lyrics, seed, mode, max_duration, temperature, top_p, top_k, repetition_penalty, abc=""):
++    def execute(cls, clip, style, lyrics, seed, mode, max_duration, temperature, top_p, top_k, repetition_penalty, abc="", cfg_scale=0.0):
+         if not abc.strip():
+             mode = "off"
++        guidance = {"cfg_scale": cfg_scale} if cfg_scale > 0 else {}
+         tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, seed=seed, abc=abc,
+                                max_tokens=max(1, round(max_duration * FRAMES_PER_SECOND)),
+-                               temperature=temperature, top_p=top_p, top_k=top_k, repetition_penalty=repetition_penalty)
++                               temperature=temperature, top_p=top_p, top_k=top_k, repetition_penalty=repetition_penalty, **guidance)
+         conditioning = clip.encode_from_tokens_scheduled(tokens)
+         return io.NodeOutput(conditioning, conditioning[0][1]["yue2_frames"] / FRAMES_PER_SECOND)
+ 

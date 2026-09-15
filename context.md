@@ -56,6 +56,20 @@
 > ai-toolkit claim; it has been **rewritten from scratch** as a forward-looking
 > Colab run plan. **This changes §2, §7, §8 and §10, reverses the
 > acoustic-first ordering, and is detailed in §16.**
+>
+> **Session 7 (first real training + first LoRA evaluation):** executed the
+> semantic-token → planner path end to end for the first time. Added the
+> tokenizer head to the bootstrap, fixed the generation-side `cfg_scale` gap with
+> a committed patch, tokenized the whole corpus (256/256), trained a **100-step
+> planner LoRA on semantic tokens** (held-out loss 5.60 → 4.95, −11.7%), and
+> rendered a user-supplied track (`04-وصف-محاسن-الحبيبة-والجمال`, Maqam Nahawand)
+> as **base vs LoRA plus checkpoints 30/60/100**. **The user's verdict on this
+> first output is "so-so, not good not bad," and they will give their full
+> impression next session** — so the next session opens with their listening
+> notes, not a plan. Several real glitches were hit and fixed (a broken Stage-1
+> command, the ComfyUI clone race resurfacing, a ModelPatcher deep-clone pitfall,
+> the NAR companion not being a plain LoRA). **All of them are catalogued in §17
+> — read §17 before acting.**
 
 ## 1. The goal
 
@@ -73,6 +87,10 @@ composed in a Western key (not a maqam), and the output has Arabic pronunciation
 problems (notably ق) that the user did **not** hear from the base model when they
 tested it, nor in the source Suno tracks. See **§14**. Operational detail: §11
 setup/dry run, §12 checkpoint/resume/observability, §13 GCS backup.
+**Session 7 superseded the acoustic-first attempt** with the planner-first
+semantic-token path: the first planner LoRA is trained (100 steps) and a first
+base-vs-LoRA A/B has been rendered; the user's standing verdict is **"so-so, not
+good not bad"**, with full listening notes to come. See **§17**.
 
 ## 2. Background on the tools involved (verified via web search, Sep 2026)
 
@@ -159,7 +177,10 @@ setup/dry run, §12 checkpoint/resume/observability, §13 GCS backup.
   rank-64 **AR LoRA** with a lyric cursor + a 50/50 "minted" regularizer pack,
   capped at ~1500 steps, checkpoint picked by ear. **Note the disagreement:**
   she ships the NAR companion LoRA; speedyrulz measured it makes renders *less*
-  similar and does not use it — A/B it rather than assuming. License: CC BY-NC
+  similar and does not use it — A/B it rather than assuming. **Session 7 A/B'd
+  it: it cannot be loaded as a plain LoRA (it also carries `vae2llm`/`llm2vae`
+  replacement weights) and, folded in correctly, it slightly *improves*
+  round-trip fidelity (chroma +0.015–0.025). See §17.** License: CC BY-NC
   4.0 (non-commercial), same as YuE2.
 - **`t8star/YuE2-Comfy` (HuggingFace) — unexplored lead for the ABC
   problem, found session 3.** A ComfyUI package that bundles SheetSage2 and
@@ -424,9 +445,21 @@ failure mode and doesn't false-positive on the clean case.
   tokenize (§4), planner LoRA (§5), acoustic LoRA (§6), evaluation (§7).
 - `prepare_dataset.py` — updated in session 2, see §6.
 - `verify_dataset.py` — new in session 2, see §6.
-- `bootstrap/setup.sh` — Colab bootstrap. **Fixed in session 4**: wrong
-  checkpoint path, a ComfyUI clone race, and a stray `cd`; it now runs cleanly
-  (see §11).
+- `bootstrap/setup.sh` — Colab bootstrap. **Session 4** fixed the wrong
+  checkpoint path, a ComfyUI clone race, and a stray `cd` (see §11). **Session 7**
+  added a `tokenizer` job that stages `tokenizer_head_joint_v4.pt` into
+  `models/audio_encoders/` after the clone, a head-presence check, and an
+  idempotent `git apply` of the cfg_scale patch (see §17).
+- `bootstrap/yue2_cfg_scale.patch` — **new session 7.** Adds the `cfg_scale`
+  input to ComfyUI's `YuE2GenerateMusic`/`YuE2GenerateABC` nodes; applied by
+  `setup.sh` because `ComfyUI/` is an untracked clone that dies with the VM
+  (see §15, §17).
+- `audition_planner.py` — **new session 7.** Renders a given style/lyrics prompt
+  through the full ComfyUI YuE2 graph, base or a named planner LoRA, at
+  `cfg_scale`/`max_duration` of your choosing. See §17.
+- `render_tokens_nar.py` — **new session 7.** Standalone renderer for a
+  `.semantic.npy`, optionally applying Mothersuperior's NAR companion (which is
+  *not* a plain LoRA — see §17).
 - `backup_to_gcp.py` — **new session 4.** Mirrors `ComfyUI/models/loras/`,
   `/content/logs/`, and `agent_notes/` to GCS every 25 min with `gsutil rsync`.
   See §13.
@@ -502,30 +535,33 @@ failure mode and doesn't false-positive on the clean case.
 
 ## 10. Suggested first steps for next session
 
-Session 6 rewrote the plan. **Read `PLAN.md` first** — it is now the
-forward-looking Colab run plan, and §16 below records the findings behind it.
-Priorities, in order:
+**Session 7 ran the training and produced the first real evaluation; the user
+is listening now.** So the next session starts with **their impression of the
+track-4 base-vs-LoRA A/B** (`/content/track4/`, or `…/run_backup/track4/` in
+GCS), not with setup. Priorities, in order:
 
-1. **Add the tokenizer to the Colab bootstrap.** `bootstrap/setup.sh` must
-   download `Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`
-   (`tokenizer_head_joint_v4.pt`) into `ComfyUI/models/audio_encoders/`, and
-   make `m-a-p/MERT-v2-FullSong` available. Exact lines in `PLAN.md` §3.
-2. **Tokenize the corpus** with `train_cli.py … --semantic-head
-   tokenizer_head_joint_v4.pt` so every track gets a `.semantic.npy`
-   (`PLAN.md` §4). Smoke-test on a few tracks and listen to a round trip first.
-3. **Train the planner/AR LoRA on semantic tokens** — the composition half, the
-   only thing that moves maqam/pronunciation (`PLAN.md` §5). Start with
-   `--semantic --no-abc --abc-dropout 0.5 --kl-weight 0.5`, small step counts,
-   `--save-every 10`, probes on; pick by ear.
-4. **Fix the generation-side `cfg_scale` gap before trusting any A/B** (§15).
-   `YuE2GenerateMusic` still doesn't forward it, and the gap applies with the
-   LoRA off too. Then re-render with `cfg_scale=1.2` and `max_duration=400`.
-5. **Acoustic LoRA only after the planner proves out**, and then in the fixed
-   mode: `--conditioning inference_like --use-semantic` (`PLAN.md` §6). Do not
-   repeat the 1500-step `compact` run (§14).
-6. `status`-field check (§5) and `--max-per-song` capping — still open, low
-   priority. Corpus drift: re-run `verify_dataset.py --dataset-root ...` before
-   trusting the §5 numbers.
+1. **Collect the user's listening notes.** Key question: does any planner
+   checkpoint (30/60/100) clearly differ from `base` on composition/maqam, and
+   which is best? That single answer decides the branch below.
+2. **Branch.**
+   - *LoRA is indistinguishable from base* → the planner isn't moving the needle
+     at 100 steps. Investigate before burning acoustic effort: extend to
+     ≥200–300 steps (`--existing-lora maqam_planner_v1_000100.safetensors`, total
+     `--steps`) and/or revisit planner hyperparameters (LR, `--abc-dropout`,
+     targets, `--max-tokens`). Watch KL (§17).
+   - *LoRA differs but the result is still "meh"* → the limiter is the acoustic
+     half (YuE2 timbre) → train Stage 3 acoustic LoRA in the fixed mode
+     `--conditioning inference_like --use-semantic` (`PLAN.md` §6), and consider
+     Nora's NAR companion for rendering (`render_tokens_nar.py`).
+   - *A checkpoint is good* → lock it; stack planner (CLIP) + acoustic (MODEL)
+     and do the final seed-matched A/B.
+3. **Fix the session-7 glitches so they don't recur** — all listed in §17.
+   First: on a fresh Colab, confirm the cfg_scale patch actually applied
+   (`setup.sh` warns if not) and that the fixed Stage-1 tokenize command works.
+4. **Tokenize any new material** with `--semantic-head` (the head is already in
+   the bootstrap now) before training on it.
+5. Open/low priority, unchanged: `status`-field check (§5), `--max-per-song`
+   capping, corpus-drift re-verify with `verify_dataset.py --dataset-root ...`.
 
 ## 11. Session 4 — setup done, dry run passed, first run staged
 
@@ -869,6 +905,10 @@ with the LoRA disabled.
    implicated; retraining would burn a session without confirming or denying
    the `cfg_scale` hypothesis.
 
+**Session 7 update: this is done.** `cfg_scale` is wired into both generation
+nodes via `bootstrap/yue2_cfg_scale.patch`, and every render from session 7 on
+uses `cfg_scale=1.2`, `max_duration=400`. See §17 for the patch and its caveat.
+
 ### If `cfg_scale=1.2` does not fully resolve it
 Re-open, in this order (updated from §14's original list, tashkeel and the
 Western-key bias now removed as closed):
@@ -948,3 +988,146 @@ SheetSage2/melismatic-Arabic risk moot and removes §8's last blocker. This
 - Still open, unchanged: `status`-field check (§5), `--max-per-song` capping,
   corpus-drift re-verify, and the generation-side `cfg_scale` gap (§15, now a
   prerequisite for trustworthy evaluation rather than the top training item).
+
+## 17. Session 7 — first planner LoRA, first real evaluation, and the glitch list
+
+This was the first session to run the whole semantic-token → planner pipeline and
+produce an actual fine-tuned model plus renders. It also hit a string of real
+snags. **Everything actionable is in "Glitches" below; fix those first next
+session.**
+
+### What ran, in order
+
+1. **Bootstrap.** Added a `tokenizer` job to `bootstrap/setup.sh` (staged copy of
+   `tokenizer_head_joint_v4.pt` into `models/audio_encoders/`, ~171 MB) and
+   pre-downloaded `m-a-p/MERT-v2-FullSong` to the HF cache (~630 MB). Added a
+   `tokenizer` head-presence check and an idempotent apply of
+   `bootstrap/yue2_cfg_scale.patch`.
+2. **`cfg_scale` fix.** Patched ComfyUI's `YuE2GenerateMusic` **and**
+   `YuE2GenerateABC` to accept a `cfg_scale` input (default `0.0` = model
+   default, so existing behavior is unchanged) and forward it through
+   `clip.tokenize()`. **Correction to §15:** that section said `generate_abc()`
+   had "no hook at any layer" — true for the trainer's helper, but the *node*
+   path (`YuE2GenerateABC.execute` → `clip.tokenize`) does accept `cfg_scale`, so
+   it is patchable too. Durable across fresh VMs via the committed patch file
+   (the `ComfyUI/` clone is untracked and dies with the VM).
+3. **Tokenizer smoke test + round-trip gate** (non-destructive, on copies):
+   - 2 real tracks tokenized in 1–4 s each, 2.7 GB peak VRAM; 4046 / 4564 codes,
+     in-vocab.
+   - Round-trip through the base acoustic stage: **onset 0.615 / 0.806,
+     chroma 0.749 / 0.791** — as good as or better than the trainer README's own
+     reference round-trips (chroma 0.60–0.65). **Composition is preserved** →
+     the planner path is sound.
+   - **The "weird noise" the user heard is the acoustic half, not a bug:** steps
+     32 vs 64 and cfg 1 vs 2 all scored within 0.01; no added broadband noise
+     (spectrum matches; the only "excess" is ≈ −85 dB at 18 kHz, inaudible). Per
+     the README, "expect the timbre and vocal detail to be YuE2's, not the
+     recording's."
+4. **NAR companion investigation** (the one artifact-specific lever). See §17
+   Glitches #4/#5: it is **not a plain LoRA**, and applying it to the wrong
+   (cloned) module made it look like a no-op. When folded correctly it *does*
+   help a little — chroma **+0.015 to +0.025** vs no companion — so the
+   trainer README's "less similar" claim is not reproduced here. Tool:
+   `render_tokens_nar.py`.
+5. **Stage 1 — tokenize the corpus.** 256/256 tokenized, 0 failed; VAE cache
+   256 files / 199 MB. **The command then crashed** (Glitch #1). The work was
+   already done, so Stage 2 reused it.
+6. **Stage 2 — planner LoRA (100 steps).** `--semantic --no-abc --abc-dropout 0.5
+   --kl-weight 0.5`, rank 32, lr 5e-5 cosine.
+   - Final LoRA `maqam_planner_v1.safetensors`, **336 tensors**; 11 checkpoints
+     (`_000010`…`_000100`) + `.resume`; probes `step_000000`…`step_000100`.
+   - **Held-out eval 5.6047 → 4.9468 (−11.7%)**, still falling at step 100.
+   - **All 11 probes ended normally** (1648–2611 ABC tokens vs an 8192 cap) → no
+     over-training signal by that measure.
+   - **KL 0 → 0.041 → 0.178 → 0.217 → 0.253** and still creeping, vs the plan's
+     "level off at a few hundredths" guide — flagged, see Glitch #11.
+7. **Track-4 evaluation.** User supplied `/content/workspace_manifest.json`; track
+   `04-وصف-محاسن-الحبيبة-والجمال` (Maqam Nahawand). Built a training-format
+   prompt (style stripped to `genre/vocals/production/instrumentation`; lyrics
+   through `clean_lyrics(..., "simplify")`), rendered **base + checkpoints
+   30/60/100** at seed 831001, `cfg_scale=1.2`, `max_duration=400`
+   (`audition_planner.py`). All four land ~D minor by key detection, so it is an
+   ear call. **User's verdict so far: "so-so, not good not bad"; full impression
+   next session.**
+8. **GCS.** Ran `backup_to_gcp.py --once` (loras + probes + logs + notes;
+   2.74 GiB) and hand-uploaded `track4/`, `roundtrip/`, `prompts/`, `repo/`
+   (helper scripts + patch + PLAN). Everything under
+   `gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/`.
+
+### Glitches and snags — fix these next iteration
+
+1. **Stage-1 tokenize command was broken.** A `planner … --dry-run` with no
+   planner target defaults to ABC, and `build_sequences` raises
+   `ValueError: No planner training sequences` **after** the ~20 min VAE encode.
+   Fixed in `PLAN.md` §4 by adding `--semantic --no-abc`. *Lesson: a dry run still
+   builds sequences and needs a target.*
+2. **`cfg_scale` was never wired into the ComfyUI nodes** (§15). Fixed via
+   `bootstrap/yue2_cfg_scale.patch`, applied by `setup.sh`. **Caveat:** the patch
+   is tied to ComfyUI commit `36da3ff7`; a future upstream change to
+   `comfy_extras/nodes_yue2.py` will make `git apply` fail and `setup.sh` only
+   *warns* — so verify after a fresh clone (or the renders silently lose
+   `cfg_scale`).
+3. **ComfyUI clone race, revisited.** Any parallel job that writes into
+   `ComfyUI/` before/while the clone job runs can be wiped by its
+   `rm -rf "$COMFY"`. The tokenizer download now stages to `/content/staging` and
+   is moved in after the clone (same pattern as the checkpoint). Keep this for any
+   future asset.
+4. **ComfyUI `ModelPatcher` deep-clones on load** (`deepclone_multigpu`). Editing
+   `model.model.diffusion_model` in place *before* `Renderer.load()` does **not**
+   reach the loaded patcher — the first NAR A/B was a false "no effect"
+   (corr 1.000). Correct approach: call `renderer.load()`, then edit
+   `renderer.patcher.model.diffusion_model`.
+5. **Nora's NAR companion is not a plain LoRA.** `nar_lora_joint_v4.bf16.safetensors`
+   contains (a) **full replacement weights** for `vae2llm`/`llm2vae` and (b) 196
+   rank-32 deltas keyed `layers.N.nar_self_attn.{q,k,v,o}_proj` /
+   `nar_mlp.{gate,up,down}_proj`, with PEFT `lora_A/B` names and **no**
+   `diffusion_model.` prefix — so the `YuE2TrainerLoadLoRA` node cannot load it.
+   ComfyUI merges those modules into `self_attn.qkv_proj` (`[q;k;v]`) and
+   `mlp.gate_up_proj` (`[gate;up]`), so it must be **folded in** (see
+   `render_tokens_nar.py`), not loaded. Done correctly it improves round-trip
+   fidelity slightly (above).
+6. **Starting ComfyUI from the agent shell hangs the tool.** `nohup python main.py
+   &` blocks and gets killed on timeout; `setsid nohup … < /dev/null > log 2>&1 &
+   disown` survives. Also **stop the server before training** — it holds ~6–7.5 GB
+   VRAM on the single shared GPU.
+7. **MERT loading.** Use the trainer's `load_mert` (it initialises the rotary
+   `inv_freq` buffer). Plain `AutoModel.from_pretrained` on transformers 5 leaves
+   that buffer uninitialised → silently wrong or NaN features.
+8. **Planner probes were ABC-only.** `--probe-music-seconds` defaults to 0, so no
+   per-checkpoint `.semantic.npy` was written; auditioning therefore needs a
+   separate render (`audition_planner.py`). Next time set
+   `--probe-music-seconds`/`--probe-render` if you want audio per checkpoint.
+9. **Dry runs can leave untrained artifacts.** Session 4's dry run saved a 0-step
+   `maqam_acoustic_v1.safetensors`; this session's Stage 1 crashed before saving,
+   so there was no untrained planner file to confuse. Don't treat a `--dry-run`
+   artifact as a model.
+10. **The leak-free eval is still `--eval-holdout 5 --seed 2002`** (§11) — it was
+    used and held out the expected 5 single-take poems. No change needed.
+11. **KL ran hot.** 0 → 0.25 and still rising, vs the plan's "a few hundredths"
+    guide. Either the guide is optimistic for this corpus or the trust region is
+    under-weighted; decide next session (raise `--kl-weight`, or stop earlier, or
+    accept if the ear likes an early checkpoint).
+12. **GCS backup is incomplete by design.** `backup_to_gcp.py` covers only
+    `loras/`, `logs/`, `agent_notes/`; renders, prompts and scripts were uploaded
+    by hand. The VAE cache (199 MB, regenerable) is excluded unless
+    `--include-cache`.
+13. **New helper scripts are uncommitted.** `audition_planner.py` and
+    `render_tokens_nar.py` live only in the VM (and GCS `repo/`). **Commit them to
+    git next session** so a fresh clone has them.
+
+### Artifacts (durable copies in GCS)
+`gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/`
+- `loras/` — all planner checkpoints + final + `.resume` + `loss.json` + probes
+- `track4/` — the base-vs-LoRA A/B (the user is listening to these)
+- `roundtrip/` — tokenizer round-trip + NAR A/B renders
+- `prompts/` — `workspace_manifest.json`, `track4.style.txt`, `track4.lyrics.txt`
+- `repo/` — `audition_planner.py`, `render_tokens_nar.py`, `setup.sh`,
+  `yue2_cfg_scale.patch`, `PLAN.md`
+- `logs/`, `agent_notes/`
+
+### What the next session needs from the user
+Their listening impression of `track4_base` vs `track4_maqam_planner_v1`
+(and checkpoints 30/60) — specifically whether the LoRA changes composition at
+all, and which (if any) checkpoint sounds closest to the intended Nahawand. That
+answer picks between "train the planner more", "the limiter is the acoustic half
+→ Stage 3", or "lock this checkpoint and stack".

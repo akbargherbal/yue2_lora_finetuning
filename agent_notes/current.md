@@ -1,23 +1,24 @@
-# Session 6 — docs rewritten around the real blocker
+# Push to GitHub — run this auth line first
 
-## What changed
-- `PLAN.md` — **rewritten from scratch.** Old file's §0 was built on the
-  fabricated "ai-toolkit PR #1042 supports YuE2" claim; gone. New file is the
-  Colab run plan: bootstrap additions → tokenize corpus → **planner/AR LoRA**
-  (the maqam lever) → acoustic LoRA → evaluation. Exact CLI commands in each
-  stage, verified against the trainer's `train_cli.py` source this session.
-- `context.md` — added session-6 header note and **§16**; updated §2 (new
-  Mothersuperior tokenizer bullet + planner-target correction), §7, §8 (ABC
-  blocker de-prioritized, ordering reversed), §10 (new priorities).
+`gh` is installed but **not logged in**. In another terminal (same VM), run this;
+it prompts without echoing the token:
 
-## The one-line version
-YuE2's missing audio→semantic-token encoder is
-`Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4`. It is **already
-integrated** into our backend (`train_cli.py --semantic-head`), which lets the
-**planner LoRA train on semantic tokens with no ABC scores** — the composition
-half that controls maqam/pronunciation. Train planner first, acoustic second.
+```bash
+read -rsp 'GitHub token: ' T && echo && printf '%s' "$T" | gh auth login --with-token && unset T && gh auth status
+```
 
-## Next (when we move to Colab)
-Follow `PLAN.md`. Stage 1 = add the head download to `bootstrap/setup.sh` and
-tokenize the corpus; Stage 2 = planner LoRA; then fix the `cfg_scale` gap
-(§15) before trusting any A/B.
+Token needs `repo` scope. Then tell the session it's done and it will commit +
+push.
+
+## What will be committed (from repo root, `main`, remote
+`https://github.com/akbargherbal/yue2_lora_finetuning.git`)
+- `context.md` — session-7 §17 (glitch list) + header/§1/§2/§7/§10/§15 updates
+- `PLAN.md` — §4 tokenize command fixed (`--semantic --no-abc`)
+- `bootstrap/setup.sh` — tokenizer head job + head check + cfg_scale patch apply
+- `bootstrap/yue2_cfg_scale.patch` — new; wires `cfg_scale` into the YuE2 nodes
+- `audition_planner.py` — new; base/checkpoint renderer
+- `render_tokens_nar.py` — new; NAR-companion renderer
+- `agent_notes/current.md`
+
+**Not** committed: `ComfyUI/` (untracked clone, huge). Push will use
+`git -c credential.helper='!gh auth git-credential'` so no git config is changed.

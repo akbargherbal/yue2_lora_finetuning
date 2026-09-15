@@ -94,6 +94,7 @@ python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
   --checkpoint yue2_3b_bf16.safetensors \
   --data /content/data/dataset \
   --semantic-head tokenizer_head_joint_v4.pt \
+  --semantic --no-abc \
   --eval-holdout 5 --seed 2002 \
   --steps 100 --out maqam_planner_v1 --dry-run 2>&1 | tee -a /content/logs/train.log
 ```

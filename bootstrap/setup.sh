@@ -53,6 +53,14 @@ start_job checkpoint \
            hf download Comfy-Org/YuE2 checkpoints/yue2_3b_bf16.safetensors \
              --local-dir "'"$STAGING"'/models"'
 
+# The community audio -> semantic-token head YuE2 never shipped (Mothersuperior
+# v4). Staged like the checkpoint so the parallel ComfyUI clone cannot wipe it.
+start_job tokenizer \
+  bash -c 'mkdir -p "'"$STAGING"'/audio_encoders" && \
+           hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 \
+             tokenizer_head_joint_v4.pt \
+             --local-dir "'"$STAGING"'/audio_encoders"'
+
 start_job dataset \
   bash -c 'mkdir -p /content/data && \
            gsutil -m cp -r "'"$GCP_DATASET_PATH"'" /content/data'
@@ -83,6 +91,25 @@ else
   echo "[WARN] staged checkpoint not found — checkpoint job failed, see log above"
 fi
 
+mkdir -p "$COMFY/models/audio_encoders"
+if [ -f "$STAGING/audio_encoders/tokenizer_head_joint_v4.pt" ]; then
+  mv -f "$STAGING/audio_encoders/tokenizer_head_joint_v4.pt" "$COMFY/models/audio_encoders/"
+else
+  echo "[WARN] staged tokenizer head not found — tokenizer job failed, see /content/logs/tokenizer.log"
+fi
+
+# --- cfg_scale generation fix (context.md §15): the YuE2 generation nodes never
+# forwarded text-guidance scale. Committed as a patch so a fresh clone gets it;
+# idempotent so re-running the bootstrap (or an upstream that already fixed it)
+# is a no-op rather than an error.
+if git -C "$COMFY" apply --reverse --check "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" 2>/dev/null; then
+  echo "[ok]   cfg_scale node patch already applied"
+elif git -C "$COMFY" apply --check "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" 2>/dev/null; then
+  git -C "$COMFY" apply "$REPO_ROOT/bootstrap/yue2_cfg_scale.patch" && echo "[ok]   applied cfg_scale node patch"
+else
+  echo "[WARN] cfg_scale node patch did not apply — nodes_yue2.py changed upstream; renders may ignore cfg_scale"
+fi
+
 # --- Trainer install: the one real dependency (needs ComfyUI/custom_nodes/) ---
 echo "Installing trainer (depended on ComfyUI job above)..."
 mkdir -p "$COMFY/custom_nodes"
@@ -107,6 +134,14 @@ if [ -f "$ckpt" ]; then
   fi
 else
   echo "[FAIL] checkpoint missing at $ckpt"
+  fail=1
+fi
+
+head="$COMFY/models/audio_encoders/tokenizer_head_joint_v4.pt"
+if [ -f "$head" ]; then
+  echo "[ok]   tokenizer head present, $(( $(stat -c%s "$head") / 1024 / 1024 )) MB"
+else
+  echo "[FAIL] tokenizer head missing at $head — semantic-token training cannot run"
   fail=1
 fi
 
