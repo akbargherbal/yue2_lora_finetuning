@@ -66,6 +66,13 @@ was best last time). If KL still climbs at 1.0, raise to 2.0 or lower `--lr`.
 Start the backup daemon under this run's name first:
 `python backup_to_gcp.py --run-name maqam_planner_v2` (§2.2).
 
+**Ran session 9.** Held-out 5.6047 → **4.9400 (−11.9%)**, plateaued by ~step
+120; KL still reached ~0.25 (weight 1.0 only *slowed* the drift). Artifacts
+under `maqam_planner_v2/` in GCS; five audition renders on the leak-free
+holdout `nahawand_0095_01_take01` (base + steps 30/60/100/200) in
+`maqam_planner_v2/renders_unseen/`. **Awaiting the ear verdict** — guide in
+`agent_notes/sessions/session-09.md`.
+
 ## 0. Where we are, and why this session exists
 
 - **Listening verdict on the track-4 A/B is in (resolves KI-21):** base vs

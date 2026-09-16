@@ -54,5 +54,8 @@ unreleased minted artifacts and patched it to `MINTED=0`
 ran the 3000-step calibration (held-out `real_nar` 0.9629 → 0.8789). A 2×2 ear
 test **rejected** the calibrated head/NAR (muddy, ق→ك), so the stock tokenizer
 stands and the **planner** is the next lever (KI-03). Documented the VM/GPU-switch
-restore path. KI-25–30.
+restore path. Re-ran the planner with `--kl-weight 1.0` (`maqam_planner_v2`,
+held-out 5.6047 → 4.9400 / −11.9%, KL still climbing) and generated five
+base-vs-checkpoint renders on the leak-free holdout — **awaiting the ear verdict**
+(guide in the session file). KI-25–30.
 → [`agent_notes/sessions/session-09.md`](agent_notes/sessions/session-09.md)

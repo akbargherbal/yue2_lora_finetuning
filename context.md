@@ -20,7 +20,8 @@ elsewhere:
 > `bootstrap/joint_minted_optional.patch`, rebuild corpus/venv/models, restore
 > prep + checkpoints from GCS). GCS root:
 > `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/`; the calibration run
-> `maqamverse_calib_v1/` is done/archived, the next run is `maqam_planner_v2/`.
+> `maqamverse_calib_v1/` and the planner run `maqam_planner_v2/` are done, and
+> the latter awaits an ear verdict on `maqam_planner_v2/renders_unseen/`.
 > `agent_notes/current.md` is per-turn scratch — this file and `PLAN.md` are the
 > durable state.
 
@@ -41,28 +42,36 @@ regularizer was unavailable (`MINTED=0`, KI-25) and `joint.py` targets a single
 artist, not a four-maqam corpus. **Conclusion: the stock tokenizer already
 produces idiomatic Arabic round-trips, so the tokenizer is not the planner's
 bottleneck.** Decision: stop the calibration line and refocus on the planner
-itself. Note: the session-7 tokenized cache did not survive the VM and was
-never backed up (KI-30), so planner work starts by re-tokenizing the corpus.
+itself.
+
+Session 9 then executed that: re-tokenized the corpus (256/256; the cache is
+now a backup target, KI-30 fixed) and trained `maqam_planner_v2` with
+`--kl-weight 1.0`, 200 steps. Held-out loss 5.6047 → **4.9400 (−11.9%)**, but it
+plateaued by ~step 120 and KL still reached ~0.25 — weight 1.0 only *slowed* the
+drift (KI-03). Five audition renders on the leak-free holdout
+`nahawand_0095_01_take01` (base + steps 30/60/100/200; seed 831001, cfg 1.2,
+max 400) are in GCS at `maqam_planner_v2/renders_unseen/`. **Awaiting the user's
+ear verdict** (2×2: melody × pronunciation) — listening guide in
+`agent_notes/sessions/session-09.md`.
 
 ## Blocked on
 
-Nothing. The lever is chosen — raise the planner's KL weight (`PLAN.md` →
-"Current plan" P2) — because more steps currently make it *worse* (KI-03).
+The user's listening verdict on `renders_unseen/` (base vs steps 30/60/100/200).
+That picks the branch (`PLAN.md` §7).
 
 ## Next steps (in order)
 
-1. **Re-tokenize the corpus** (`PLAN.md` → "Current plan" P1) with the stock
-   head — the previous semantic-token cache is gone (KI-30).
-2. **Run the planner KL experiment** (P2): `--kl-weight 1.0`, 200 steps, dense
-   saves; ear-test checkpoints including early ones; watch that `kl` levels at
-   a few hundredths instead of climbing.
-3. **Branch (`PLAN.md` §7):** if the planner still reads foreign after a
-   well-regularized run, the tokenizer is truly exonerated → take the symbolic
-   lead (SheetSage2 melody→ABC, `architecture.md` §5).
-4. **Backup/durability:** daemon runs under `--run-name`; `TARGETS` covers
+1. **Listen** to the five `renders_unseen/` clips using the guide in
+   `agent_notes/sessions/session-09.md`; report the per-checkpoint melody ×
+   pronunciation verdict plus any specific mispronunciations.
+2. **Branch on it:** good melody + good pronunciation → scale up; bad melody +
+   good pronunciation → over-adaptation (fewer steps / higher KL); good melody +
+   bad pronunciation → the limiter is acoustic (NAR/decoder), not the planner;
+   bad + bad → the symbolic lead (SheetSage2, `architecture.md` §5).
+3. **Backup/durability:** daemon runs under `--run-name`; `TARGETS` covers
    `loras/`, `logs/`, `agent_notes/`, `head_calib`, `prep`, and the tokenize
-   `cache/` (KI-30).
-5. **Open/low priority, unchanged:** `status`-field check (KI-01),
+   `cache/`. Renders (`ComfyUI/output/`) are still hand-uploaded (KI-20).
+4. **Open/low priority, unchanged:** `status`-field check (KI-01),
    `--max-per-song` (KI-02), corpus-drift re-verify (KI-07).
 
 ## Session hygiene
