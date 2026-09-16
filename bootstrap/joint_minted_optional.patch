@@ -11,6 +11,15 @@
  snap=glob.glob("/workspace/hf/hub/models--m-a-p--YuE2-3B/snapshots/*")[0]; vsnap=glob.glob("/workspace/hf/hub/models--m-a-p--YuE2-Vae/snapshots/*")[0]
  model=YuE2ForCausalLM.from_pretrained(snap, local_files_only=True, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True).eval().to(dev); model.requires_grad_(False); bb=model.model
  tok=YuE2TextTokenizer(snap+"/qwen.tiktoken"); Ecodec=bb.embed_tokens.weight[CODEC_OFFSET:CODEC_OFFSET+VOCAB]
+@@ -44,7 +44,7 @@
+ groups=[]
+ if TRAIN_HEAD: groups.append({"params":list(head.parameters()),"lr":LR_HEAD,"weight_decay":0.05})
+ if TRAIN_LORA: groups+=[{"params":lora_params,"lr":LR_LORA,"weight_decay":0.0},{"params":io_params,"lr":LR_IO,"weight_decay":0.0}]
+-opt=torch.optim.AdamW(groups,betas=(0.9,0.95)); base_lrs=[g["lr"] for g in opt.param_groups]
++opt=torch.optim.AdamW(groups,betas=(0.9,0.95)) if groups else None; base_lrs=[g["lr"] for g in opt.param_groups] if opt else []
+ def instnorm(x): x=x.astype(np.float32); return (x-x.mean(0))/(x.std(0)+1e-5)
+ real=[]; hold=None
+ for d in sorted(glob.glob(f"{RP}/*")):
 @@ -52,12 +52,17 @@
      if item["name"]==HOLD: hold=item
      else: real.append(item)
@@ -32,7 +41,7 @@
  def mbatch(data,bs):
      xs,ys=[],[]
      for _ in range(bs):
-@@ -99,11 +104,13 @@
+@@ -99,19 +104,22 @@
          reps.append(float((idx[1:]==idx[:-1]).float().mean())); noise=torch.randn(WIN,64,generator=g).to(dev)
          for t in (0.2,0.5,0.8): tot+=flow_loss(hold["prefix"],Ecodec[idx],z,t,noise,False,False).item()
      t1=tot_=0
@@ -51,16 +60,18 @@
  def save_all(tag):
      torch.save({"model":head.state_dict(),"cfg":dict(NAME=NAME,instnorm=True)}, f"{OUT}/head_{tag}.pt")
      if TRAIN_LORA: save_lora(f"{OUT}/lora_{tag}.pt")
-@@ -111,7 +118,7 @@
+ e0,a0,r0=evaluate(); msg=f"EVAL step 0 real_nar {e0:.4f} minted_top1 {a0:.4f} real_repeat {r0:.3f}"; print(msg, flush=True); log=open(f"{OUT}/train.log","a"); log.write(msg+"\n"); best=e0; save_all("best"); t0=time.time()
  for st in range(1,STEPS+1):
      mult=min(1,st/50)*(0.2+0.8*0.5*(1+math.cos(math.pi*st/STEPS)))
-     for g_,b in zip(opt.param_groups,base_lrs): g_["lr"]=b*mult
+-    for g_,b in zip(opt.param_groups,base_lrs): g_["lr"]=b*mult
 -    if TRAIN_LORA and random.random()<MINTED_FLOW_P:   # minted regularizer for the NAR: true tokens, minted latents
++    if opt is not None:
++        for g_,b in zip(opt.param_groups,base_lrs): g_["lr"]=b*mult
 +    if TRAIN_LORA and mtrain_pids and random.random()<MINTED_FLOW_P:   # minted regularizer for the NAR: true tokens, minted latents
          p=random.choice(mtrain_pids); d=f"{ROOT}/{p}"; r=json.load(open(f"{d}/request.json")); y=np.load(f"{d}/semantic.npy").astype(np.int64); z=np.load(f"{d}/latent.npy"); n=min(len(y),len(z)); s=random.randint(0,max(0,n-WIN))
          pre=token_prefixes(SongRequest(style=r["style"],lyrics=r["lyrics"],cot="off",seed=r["seed"],id=p),tok); t=float(np.clip(np.random.beta(2,2),0.02,0.98))
          ln=flow_loss(pre,Ecodec[torch.tensor(y[s:s+WIN],device=dev)],torch.tensor(z[s:s+WIN],device=dev),t,torch.randn(WIN,64,device=dev),False,True); lc=torch.zeros((),device=dev)
-@@ -120,7 +127,7 @@
+@@ -120,7 +128,7 @@
          with torch.autocast("cuda",dtype=torch.bfloat16): lg=head(torch.tensor(m[None],device=dev))[0]
          emb,idx=st_embed(lg) if TRAIN_HEAD else (Ecodec[lg.float().argmax(-1)],None)
          ln=flow_loss(item["prefix"],emb,z,t,noise,bool(TRAIN_HEAD),bool(TRAIN_LORA))

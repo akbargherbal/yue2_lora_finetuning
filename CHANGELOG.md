@@ -46,11 +46,13 @@ adapted to this corpus (KI-04). `PLAN.md` rewritten around calibrating the head
 with Mothersuperior's `joint.py` (resolves KI-21).
 → [`agent_notes/sessions/session-08.md`](agent_notes/sessions/session-08.md)
 
-## Session 9 — GCS namespacing, corpus conversion, calibration blocked + eased
+## Session 9 — calibration attempted, rejected; tokenizer exonerated
 Migrated GCS to one generic root with per-run folders; wrote and ran
-`scripts/export_mothersuperior_format.py` (256 tracks); read Mothersuperior's
-scripts and found `joint.py` needs unreleased minted artifacts — patched to
-`MINTED=0` (`bootstrap/joint_minted_optional.patch`); built `ms_calib_venv`,
-models, and the `/workspace` layout; `prep_real.py` 256/256 done. Documented
-the VM/GPU-switch restore path. KI-25–28 added.
+`scripts/export_mothersuperior_format.py` (256 tracks); found `joint.py` needs
+unreleased minted artifacts and patched it to `MINTED=0`
+(`bootstrap/joint_minted_optional.patch`); built the separate venv/models/layout;
+ran the 3000-step calibration (held-out `real_nar` 0.9629 → 0.8789). A 2×2 ear
+test **rejected** the calibrated head/NAR (muddy, ق→ك), so the stock tokenizer
+stands and the **planner** is the next lever (KI-03). Documented the VM/GPU-switch
+restore path. KI-25–30.
 → [`agent_notes/sessions/session-09.md`](agent_notes/sessions/session-09.md)

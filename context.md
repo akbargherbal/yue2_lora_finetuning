@@ -26,56 +26,44 @@ elsewhere:
 ## Current state (one paragraph)
 
 Dataset is done and verified (256 tracks, 238 train / 18 val, poem-safe split).
-The planner LoRA (`maqam_planner_v1`, 100 steps) was audited by ear: base vs
-checkpoints 30/60/100 on a Maqam Nahawand track (**resolves KI-21**).
-Pronunciation held up, but **30 sounded better than 60/100** (KL climbing,
-KI-03) and even at 30 the لحن reads "foreign" — diagnosis: the community
-semantic head (`tokenizer_head_joint_v4.pt`, KI-04) was never adapted to this
-corpus. This session set out to run Mothersuperior's `joint.py` calibration and
-hit a wall: `joint.py` hard-requires *minted* artifacts (`sem_nbr_*.npy`,
-`feats/*.npy`, the full minted corpus) that are **not released**, so it can't
-run as shipped. Worked around by patching the local copy
-(`/content/ms_calib/scripts/joint.py`, plus `export_mothersuperior_format.py`
-in-repo) to make the minted regularizer optional (`MINTED=0`). Everything else
-is staged: the corpus is converted to Mothersuperior's flat format
-(`/content/ms_calib/corpus`, 256 tracks, 13 GB), `ms_calib_venv` exists (py3.12,
-torch 2.10+cu128, `yue2-infer@92a73cc7`), the three HF models are under
-`/workspace/hf`, the hard-coded `/workspace` layout is symlinked onto
-`/content`, and the head/NAR weights are downloaded. **Not launched yet** —
-`PLAN.md` (rewritten this session) holds the exact commands; `prep_real.py`
-then `joint.py` are next.
+The planner LoRA (`maqam_planner_v1`, 100 steps, session 7) was audited by ear
+(session 8): pronunciation held, but step 30 beat 60/100 (KL climbing, KI-03)
+and even at 30 the لحن read "foreign". Session 9 tested the resulting
+hypothesis — that the community semantic head (`tokenizer_head_joint_v4.pt`,
+KI-04) needed adapting to this corpus — by running Mothersuperior's `joint.py`
+calibration. It completed 3000 steps (held-out `real_nar` 0.9629 → 0.8789, no
+collapse), but a 2×2 by ear (stock/calibrated head × stock/calibrated NAR)
+found **no clean win, and the calibrated variants were worse** (muddy/unclear
+vocals, ق→ك degradation); the calibrated head only bought structural
+robustness (no outro collapse) at a fidelity cost. Confounds: the minted
+regularizer was unavailable (`MINTED=0`, KI-25) and `joint.py` targets a single
+artist, not a four-maqam corpus. **Conclusion: the stock tokenizer already
+produces idiomatic Arabic round-trips, so the tokenizer is not the planner's
+bottleneck.** Decision: stop the calibration line and refocus on the planner
+itself. Note: the session-7 tokenized cache did not survive the VM and was
+never backed up (KI-20), so planner work starts by re-tokenizing the corpus.
 
 ## Blocked on
 
-Nothing external. Two caveats: with the minted regularizer off there is no
-anti-collapse term, so `real_repeat` is the stop signal (`PLAN.md` §6); and
-whether a calibrated head is loadable by this repo's `--semantic-head` flag is
-still unverified (Mothersuperior ships `.safetensors` and a ComfyUI export, so
-it's likely tractable) — check after the run.
+Nothing. The next step is a design choice, not a dependency: which planner-side
+lever to try. Highest suspicion is the KL climb (KI-03) — more steps currently
+make it *worse*, so the LoRA over-adapts rather than learning style.
 
 ## Next steps (in order)
 
-1. **Launch the calibration** exactly as `PLAN.md` §5.1 → §5.3: `prep_real.py`
-   (GPU, MERT+VAE over 256 tracks), then `joint.py` with `MINTED=0
-   HOLD_TRACK=nahawand_0111_04_take01`. The user runs both.
-2. **Ear-check** `joint.py`'s held-out render
-   (`/workspace/tok/full/listen_real/real_pred_maqamverse_calib_v1.flac`)
-   against the stock-head round-trip on the same track/seed, and watch
-   `real_repeat` for collapse during training.
-3. **Branch on that listening result** (`PLAN.md` §7):
-   - *Calibrated round-trip sounds closer, pronunciation intact* → re-tokenize
-     the full corpus with the new head and retrain the planner LoRA **fresh**
-     (tokens changed underneath it).
-   - *No audible difference* → tokenizer wasn't the bottleneck; try Path 1
-     (SheetSage2 melody→ABC, `t8star/YuE2-Comfy`, `architecture.md` §5).
-   - *Calibration fails to load/run* → own session; log in
-     `docs/known-issues.md`.
-4. **Backup policy** (part of `AGENTS.md`): the daemon is **not running** —
-   start it per `PLAN.md` §2.2 before the long run; `TARGETS` now includes the
-   calibration output `head_calib`. Every invocation requires `--run-name`;
-   artifacts mirror to `.../YuE2-3B_Finetuning/<run-name>/` with a
-   `run_manifest.json`. Session 6-7 lives at
-   `.../YuE2-3B_Finetuning/maqam_planner_v1/`.
+1. **Re-tokenize the corpus** (Stage 1, `train_cli.py` planner) with the stock
+   head — the previous semantic-token cache is gone (KI-20). Planner commands
+   are in `PLAN.md`; the session-7 form is in
+   `agent_notes/sessions/session-07.md`.
+2. **Run a planner experiment aimed at the KL climb (KI-03):** raise
+   `--kl-weight` (and/or lower LR, save densely) so more steps learn style
+   without drifting; ear-test several checkpoints, including early ones.
+3. **Branch (`PLAN.md` §7):** if the planner still reads foreign after a
+   well-regularized run, the tokenizer is truly exonerated → take the symbolic
+   lead (SheetSage2 melody→ABC, `architecture.md` §5).
+4. **Backup/durability:** daemon runs under `--run-name`; `TARGETS` covers
+   `loras/`, `logs/`, `agent_notes/`, `head_calib`, `prep`. Make sure the
+   **tokenized cache is backed up this time** (KI-20) before relying on resume.
 5. **Open/low priority, unchanged:** `status`-field check (KI-01),
    `--max-per-song` (KI-02), corpus-drift re-verify (KI-07).
 

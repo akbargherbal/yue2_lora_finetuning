@@ -41,8 +41,26 @@ block at the top of `context.md`, the `joint.py` patch as a committed file, and
 joint resume, KI-27 prep not backed up, KI-28 cursor_prep can't align Arabic;
 KI-21 moved to resolved).
 
-## Not yet done
+## Calibration executed — and it didn't help
 
-- `joint.py` itself has not been run.
-- KI-26 (resume) and KI-27 (prep backup target) are known, documented gaps —
-  deliberately left for after the documentation pass per the user's call.
+- `prep_real.py` then `joint.py` (`maqamverse_calib_v1`, 3000 steps, `MINTED=0`)
+  ran clean: held-out `real_nar` **0.9629 → 0.8789** (−8.7%), best step 2600,
+  `real_repeat` ~0.02 (no collapse), ~47 min on an L4.
+- A stock 0-step render matched the same track/seed, then a **2×2** (stock vs
+  calibrated head × stock vs calibrated NAR) isolated the effects: the head
+  controls token diversity/repetition, the NAR the acoustics.
+- **The user's ear rejected the calibrated variants**: stock head + calibrated
+  NAR degraded pronunciation (ق→ك, أسود→أسعد) and still collapsed; calibrated
+  head + stock NAR was muddy/unclear. No best-of-both; the stock head remained
+  preferred despite an outro collapse.
+- **Conclusion:** the stock tokenizer already produces idiomatic Arabic
+  round-trips, so it is not why the planner sounded foreign. Confounds:
+  `MINTED=0` (KI-25) and `joint.py` being a single-artist tool, not a four-maqam
+  corpus. Decision: **stop calibrating; refocus on the planner** (KI-03, the KL
+  climb). See KI-29.
+
+## Also
+- KI-27 fixed (prep now a backup target; 256 dirs mirrored).
+- KI-26 (joint resume) left open but now moot for this line.
+- New: KI-30 — the session-7 tokenized cache is gone and wasn't backed up, so
+  planner work starts by re-tokenizing.

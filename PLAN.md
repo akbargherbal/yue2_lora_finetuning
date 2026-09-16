@@ -9,6 +9,12 @@
 > **License:** YuE2's weights and the community semantic-tokenizer/NAR assets
 > are all **CC BY-NC 4.0 (non-commercial)**. Anything trained here inherits
 > that constraint.
+>
+> **Concluded, session 9 — this plan is now a record.** The calibration ran
+> (3000 steps, held-out `real_nar` 0.9629 → 0.8789) and was **rejected by ear**:
+> the calibrated variants were worse than stock, so the stock tokenizer stands
+> and is not the planner's bottleneck (KI-29). Keep this file for reproduction;
+> the live direction is planner-side (the KL climb, KI-03) — see `context.md`.
 
 ## 0. Where we are, and why this session exists
 
