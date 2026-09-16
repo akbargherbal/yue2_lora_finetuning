@@ -376,6 +376,7 @@ run's `prep` target, so a switch restores it instead of re-running
 | `audition_planner.py` | render style+lyrics through the ComfyUI graph, base or planner LoRA |
 | `render_tokens_nar.py` | render a `.semantic.npy`, optionally fold in the NAR companion |
 | `scripts/export_mothersuperior_format.py` | dataset → Mothersuperior's flat `.flac`/`.lyrics.txt`/`.txt` corpus (head calibration, `PLAN.md` §3) |
+| `samples/` | canonical `(style, lyrics)` prompt pairs for auditions: `unseen/` (leak-free holdout) and `reference/` (historical track4, overlaps training) |
 | `backup_to_gcp.py` | periodic GCS mirror of run artifacts |
 | `bootstrap/setup.sh` | Colab bootstrap (pinned clones, downloads, patch) |
 | `bootstrap/yue2_cfg_scale.patch` | wires `cfg_scale` into the YuE2 nodes |
