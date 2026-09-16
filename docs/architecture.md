@@ -335,7 +335,7 @@ lives in exactly two places:
   today's changes weren't committed, they are gone.
 - **GCS** `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/` —
   `dataset/` (built corpus, restorable) and per-run
-  `<run-name>/{loras,logs,agent_notes,head_calib,prep}/`. The
+  `<run-name>/{loras,logs,agent_notes,head_calib,prep,cache}/`. The
   `run_manifest.json` at each run prefix names it. `agent_notes/current.md` is
   scratch; `context.md` and this file are the durable state.
 

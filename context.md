@@ -19,9 +19,10 @@ elsewhere:
 > `PLAN.md` §2.4 for restore commands (re-clone, re-apply
 > `bootstrap/joint_minted_optional.patch`, rebuild corpus/venv/models, restore
 > prep + checkpoints from GCS). GCS root:
-> `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/`; this run is
-> `maqamverse_calib_v1/`. `agent_notes/current.md` is per-turn scratch — this
-> file and `PLAN.md` are the durable state.
+> `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/`; the calibration run
+> `maqamverse_calib_v1/` is done/archived, the next run is `maqam_planner_v2/`.
+> `agent_notes/current.md` is per-turn scratch — this file and `PLAN.md` are the
+> durable state.
 
 ## Current state (one paragraph)
 
@@ -41,29 +42,26 @@ artist, not a four-maqam corpus. **Conclusion: the stock tokenizer already
 produces idiomatic Arabic round-trips, so the tokenizer is not the planner's
 bottleneck.** Decision: stop the calibration line and refocus on the planner
 itself. Note: the session-7 tokenized cache did not survive the VM and was
-never backed up (KI-20), so planner work starts by re-tokenizing the corpus.
+never backed up (KI-30), so planner work starts by re-tokenizing the corpus.
 
 ## Blocked on
 
-Nothing. The next step is a design choice, not a dependency: which planner-side
-lever to try. Highest suspicion is the KL climb (KI-03) — more steps currently
-make it *worse*, so the LoRA over-adapts rather than learning style.
+Nothing. The lever is chosen — raise the planner's KL weight (`PLAN.md` →
+"Current plan" P2) — because more steps currently make it *worse* (KI-03).
 
 ## Next steps (in order)
 
-1. **Re-tokenize the corpus** (Stage 1, `train_cli.py` planner) with the stock
-   head — the previous semantic-token cache is gone (KI-20). Planner commands
-   are in `PLAN.md`; the session-7 form is in
-   `agent_notes/sessions/session-07.md`.
-2. **Run a planner experiment aimed at the KL climb (KI-03):** raise
-   `--kl-weight` (and/or lower LR, save densely) so more steps learn style
-   without drifting; ear-test several checkpoints, including early ones.
+1. **Re-tokenize the corpus** (`PLAN.md` → "Current plan" P1) with the stock
+   head — the previous semantic-token cache is gone (KI-30).
+2. **Run the planner KL experiment** (P2): `--kl-weight 1.0`, 200 steps, dense
+   saves; ear-test checkpoints including early ones; watch that `kl` levels at
+   a few hundredths instead of climbing.
 3. **Branch (`PLAN.md` §7):** if the planner still reads foreign after a
    well-regularized run, the tokenizer is truly exonerated → take the symbolic
    lead (SheetSage2 melody→ABC, `architecture.md` §5).
 4. **Backup/durability:** daemon runs under `--run-name`; `TARGETS` covers
-   `loras/`, `logs/`, `agent_notes/`, `head_calib`, `prep`. Make sure the
-   **tokenized cache is backed up this time** (KI-20) before relying on resume.
+   `loras/`, `logs/`, `agent_notes/`, `head_calib`, `prep`, and the tokenize
+   `cache/` (KI-30).
 5. **Open/low priority, unchanged:** `status`-field check (KI-01),
    `--max-per-song` (KI-02), corpus-drift re-verify (KI-07).
 

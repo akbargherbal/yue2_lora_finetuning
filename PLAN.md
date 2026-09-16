@@ -1,4 +1,4 @@
-# PLAN — Tokenizer head calibration (Colab run plan)
+# PLAN — training runs (planner LoRA + tokenizer-calibration record)
 
 > **Rewritten from scratch, session 8.** The previous `PLAN.md` (sessions 6–7)
 > covered planner-LoRA training on the stock `tokenizer_head_joint_v4.pt` head
@@ -153,11 +153,7 @@ while the session 6-7 planner backup stays separate at
 (the root is fixed, so multiple sessions in a day just get their own folders);
 `dataset/`, `track4_ab/`, `fine_tuning_ai_music_lora/` are reserved names.
 
-**Target added.** `backup_to_gcp.py`'s `TARGETS` now also covers
-`/workspace/tok/full` (remote subfolder `head_calib`) — the one `joint.py`
-writes its checkpoints, `train.log`, and `listen_real/` render into (§5.3).
-The other three remain `ComfyUI/models/loras/`, `/content/logs/`,
-`agent_notes/` (KI-20).
+**Targets.** `backup_to_gcp.py`'s `TARGETS` = `ComfyUI/models/loras/`, `/content/logs/`, `agent_notes/`, `/workspace/tok/full` (`head_calib`), `/workspace/real/prep` (`prep`), and the trainer `cache/` (KI-30). See the script for the live list and `docs/architecture.md` → "VM / GPU switch".
 
 ### 2.3 Environment: separate venv + Mothersuperior's layout (done)
 
