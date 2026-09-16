@@ -29,6 +29,18 @@ a single short fact) can stay in chat.
 - Run anything GPU-heavy while a run might be active — check `nvidia-smi`
   first. One GPU, shared.
 
+## Runtime reality — Colab is ephemeral, storage is cheap
+
+We run on Google Colab: competitively priced and GPU-strong, but **stateless**.
+Switching runtime (say L4→A100) or losing the VM wipes local disk (`/content`,
+`/workspace`) — including the repo working tree and your own session context.
+Only GitHub + GCS persist, so hours of GPU progress can vanish if the outputs
+weren't mirrored. Storage costs far less than compute, so **bias hard toward
+persisting** anything expensive to regenerate (checkpoints, prep caches,
+renders) and toward docs a fresh, context-less session can restore from without
+the user re-explaining. Restore path: `docs/architecture.md` → "VM / GPU
+switch", `PLAN.md` §2.4.
+
 ## Backup responsibility
 
 - Before any run that writes new checkpoint types (a new `--out` path, a new
