@@ -195,4 +195,5 @@ To extend an existing planner checkpoint, use the Stage-2 command from
   dominates. Reduce it for quick tests.
 - **Outputs** land in `ComfyUI/output/yue2/`; copy what you keep to
   `/content/roundtrip/` or `/content/track4/` before the VM dies, and/or run
-  `python backup_to_gcp.py --once`.
+  `python backup_to_gcp.py --once --run-name <run-name>` (run artifacts land
+  under `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/<run-name>/`).

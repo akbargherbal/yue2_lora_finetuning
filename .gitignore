@@ -11,6 +11,9 @@ __pycache__
 # disk and mirrored to GCS by backup_to_gcp.py, but not version-controlled.
 agent_notes/current.md
 
+# Ephemeral clones (re-created by bootstrap/setup.sh; die with the VM)
+ComfyUI/
+
 # pytest / ruff
 .pytest_cache/
 .ruff_cache/

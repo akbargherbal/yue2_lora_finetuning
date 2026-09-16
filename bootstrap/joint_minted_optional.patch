@@ -1,0 +1,71 @@
+--- a/scripts/joint.py
++++ b/scripts/joint.py
+@@ -13,8 +13,8 @@
+ from yue2.tokenization_yue2 import YuE2TextTokenizer
+ from yue2.nar import attention as nar_attention, synthesize
+ NAME=sys.argv[1]; STEPS=int(sys.argv[2]); TRAIN_HEAD=int(sys.argv[3]); TRAIN_LORA=int(sys.argv[4]); INIT_HEAD=sys.argv[5]; INIT_LORA=sys.argv[6]; RANK=int(sys.argv[7]) if len(sys.argv)>7 else 32; HOLD=os.environ.get("HOLD_TRACK","")  # held-out track name for the real-audio metric; defaults to the first track
+-W="/workspace/tok/full"; ROOT="/workspace/yue2-corpus/tracks"; RP="/workspace/real/prep"; OUT=f"{W}/{NAME}"; os.makedirs(OUT,exist_ok=True); dev="cuda"
+-VOCAB=32768; WIN=512; D=512; L=8; H=8; LR_HEAD=1e-4; LR_LORA=5e-5; LR_IO=2e-5; ALPHA=0.25; TAU=0.05; MB=16; MINTED_FLOW_P=0.25
++W="/workspace/tok/full"; ROOT="/workspace/yue2-corpus/tracks"; RP="/workspace/real/prep"; OUT=f"{W}/{NAME}"; os.makedirs(OUT,exist_ok=True); os.makedirs(f"{W}/listen_real",exist_ok=True); dev="cuda"
++VOCAB=32768; WIN=512; D=512; L=8; H=8; LR_HEAD=float(os.environ.get("LR_HEAD","1e-4")); LR_LORA=float(os.environ.get("LR_LORA","5e-5")); LR_IO=float(os.environ.get("LR_IO","2e-5")); ALPHA=0.25; TAU=0.05; MB=16; MINTED_FLOW_P=0.25
+ snap=glob.glob("/workspace/hf/hub/models--m-a-p--YuE2-3B/snapshots/*")[0]; vsnap=glob.glob("/workspace/hf/hub/models--m-a-p--YuE2-Vae/snapshots/*")[0]
+ model=YuE2ForCausalLM.from_pretrained(snap, local_files_only=True, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True).eval().to(dev); model.requires_grad_(False); bb=model.model
+ tok=YuE2TextTokenizer(snap+"/qwen.tiktoken"); Ecodec=bb.embed_tokens.weight[CODEC_OFFSET:CODEC_OFFSET+VOCAB]
+@@ -52,12 +52,17 @@
+     if item["name"]==HOLD: hold=item
+     else: real.append(item)
+ if hold is None: hold=real.pop(0); print("HOLD_TRACK not set; holding out", hold["name"], flush=True)
+-held=lambda p: int(hashlib.md5(p.encode()).hexdigest(),16)%20==0; pids=[os.path.basename(f)[:-4] for f in sorted(glob.glob(f"{W}/feats/*.npy"))]
+ def load_m(p):
+     y=np.load(f"{ROOT}/{p}/semantic.npy").astype(np.int64); x=np.load(f"{W}/feats/{p}.npy")[3]; n=min(len(x),len(y)); return instnorm(x[:n]).astype(np.float16), y[:n]
+-mtrain=[load_m(p) for p in pids if not held(p)]; mval=[load_m(p) for p in pids if held(p)]; mtrain_pids=[p for p in pids if not held(p)]
++MINTED=os.environ.get("MINTED","1")!="0" and os.path.exists(f"{W}/sem_nbr_idx.npy") and bool(glob.glob(f"{W}/feats/*.npy"))
++mtrain=[]; mval=[]; mtrain_pids=[]; NB=NW=None
++if MINTED:
++    held=lambda p: int(hashlib.md5(p.encode()).hexdigest(),16)%20==0; pids=[os.path.basename(f)[:-4] for f in sorted(glob.glob(f"{W}/feats/*.npy"))]
++    mtrain=[load_m(p) for p in pids if not held(p)]; mval=[load_m(p) for p in pids if held(p)]; mtrain_pids=[p for p in pids if not held(p)]
++    NB=torch.tensor(np.load(f"{W}/sem_nbr_idx.npy").astype(np.int64),device=dev); NW=torch.softmax(torch.tensor(np.load(f"{W}/sem_nbr_cos.npy"),device=dev)/TAU,dim=1)
++else:
++    print("minted regularizer OFF (set MINTED=1 and provide feats/ + sem_nbr_* to enable)", flush=True)
+ print(f"{NAME}: head {TRAIN_HEAD} lora {TRAIN_LORA} | real {len(real)} tracks, held-out {hold['name']} | minted {len(mtrain)}/{len(mval)}", flush=True)
+-NB=torch.tensor(np.load(f"{W}/sem_nbr_idx.npy").astype(np.int64),device=dev); NW=torch.softmax(torch.tensor(np.load(f"{W}/sem_nbr_cos.npy"),device=dev)/TAU,dim=1)
+ def mbatch(data,bs):
+     xs,ys=[],[]
+     for _ in range(bs):
+@@ -99,11 +104,13 @@
+         reps.append(float((idx[1:]==idx[:-1]).float().mean())); noise=torch.randn(WIN,64,generator=g).to(dev)
+         for t in (0.2,0.5,0.8): tot+=flow_loss(hold["prefix"],Ecodec[idx],z,t,noise,False,False).item()
+     t1=tot_=0
+-    for _ in range(24):
+-        x,y=mbatch(mval,16)
+-        with torch.autocast("cuda",dtype=torch.bfloat16): lg=head(x)
+-        mk=y!=-100; t1+=(lg.float().argmax(-1)==y)[mk].sum().item(); tot_+=mk.sum().item()
+-    head.train(); return tot/9, t1/tot_, float(np.mean(reps))
++    if mval:
++        for _ in range(24):
++            x,y=mbatch(mval,16)
++            with torch.autocast("cuda",dtype=torch.bfloat16): lg=head(x)
++            mk=y!=-100; t1+=(lg.float().argmax(-1)==y)[mk].sum().item(); tot_+=mk.sum().item()
++    minted_top1=t1/tot_ if tot_ else float("nan")
++    head.train(); return tot/9, minted_top1, float(np.mean(reps))
+ def save_all(tag):
+     torch.save({"model":head.state_dict(),"cfg":dict(NAME=NAME,instnorm=True)}, f"{OUT}/head_{tag}.pt")
+     if TRAIN_LORA: save_lora(f"{OUT}/lora_{tag}.pt")
+@@ -111,7 +118,7 @@
+ for st in range(1,STEPS+1):
+     mult=min(1,st/50)*(0.2+0.8*0.5*(1+math.cos(math.pi*st/STEPS)))
+     for g_,b in zip(opt.param_groups,base_lrs): g_["lr"]=b*mult
+-    if TRAIN_LORA and random.random()<MINTED_FLOW_P:   # minted regularizer for the NAR: true tokens, minted latents
++    if TRAIN_LORA and mtrain_pids and random.random()<MINTED_FLOW_P:   # minted regularizer for the NAR: true tokens, minted latents
+         p=random.choice(mtrain_pids); d=f"{ROOT}/{p}"; r=json.load(open(f"{d}/request.json")); y=np.load(f"{d}/semantic.npy").astype(np.int64); z=np.load(f"{d}/latent.npy"); n=min(len(y),len(z)); s=random.randint(0,max(0,n-WIN))
+         pre=token_prefixes(SongRequest(style=r["style"],lyrics=r["lyrics"],cot="off",seed=r["seed"],id=p),tok); t=float(np.clip(np.random.beta(2,2),0.02,0.98))
+         ln=flow_loss(pre,Ecodec[torch.tensor(y[s:s+WIN],device=dev)],torch.tensor(z[s:s+WIN],device=dev),t,torch.randn(WIN,64,device=dev),False,True); lc=torch.zeros((),device=dev)
+@@ -120,7 +127,7 @@
+         with torch.autocast("cuda",dtype=torch.bfloat16): lg=head(torch.tensor(m[None],device=dev))[0]
+         emb,idx=st_embed(lg) if TRAIN_HEAD else (Ecodec[lg.float().argmax(-1)],None)
+         ln=flow_loss(item["prefix"],emb,z,t,noise,bool(TRAIN_HEAD),bool(TRAIN_LORA))
+-        if TRAIN_HEAD:
++        if TRAIN_HEAD and mtrain:
+             x,y=mbatch(mtrain,MB)
+             with torch.autocast("cuda",dtype=torch.bfloat16): lgm=head(x)
+             lc=soft_ce(lgm,y)

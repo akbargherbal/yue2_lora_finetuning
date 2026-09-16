@@ -38,3 +38,19 @@ split the 1,100-line `context.md` into this
 changelog, per-session files, `docs/architecture.md`, and
 `docs/known-issues.md`; committed the test suite; pinned dependencies and both
 external repos; hardened `audition_planner.py`; de-duplicated run commands.
+
+## Session 8 — track-4 verdict; the plan turns to the head
+User's A/B verdict: step 30 beat 60/100, pronunciation intact, but the لحن
+reads "foreign". Diagnosis: KL climbing (KI-03) plus the semantic head never
+adapted to this corpus (KI-04). `PLAN.md` rewritten around calibrating the head
+with Mothersuperior's `joint.py` (resolves KI-21).
+→ [`agent_notes/sessions/session-08.md`](agent_notes/sessions/session-08.md)
+
+## Session 9 — GCS namespacing, corpus conversion, calibration blocked + eased
+Migrated GCS to one generic root with per-run folders; wrote and ran
+`scripts/export_mothersuperior_format.py` (256 tracks); read Mothersuperior's
+scripts and found `joint.py` needs unreleased minted artifacts — patched to
+`MINTED=0` (`bootstrap/joint_minted_optional.patch`); built `ms_calib_venv`,
+models, and the `/workspace` layout; `prep_real.py` 256/256 done. Documented
+the VM/GPU-switch restore path. KI-25–28 added.
+→ [`agent_notes/sessions/session-09.md`](agent_notes/sessions/session-09.md)

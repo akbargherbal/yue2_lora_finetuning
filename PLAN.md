@@ -86,63 +86,117 @@ If it isn't running:
 
 ```bash
 cd /content/yue2_lora_finetuning
-nohup python backup_to_gcp.py > /content/logs/gcp_backup_stdout.log 2>&1 & disown
+nohup python backup_to_gcp.py --run-name maqamverse_calib_v1 \
+  > /content/logs/gcp_backup_stdout.log 2>&1 & disown
 ```
 
-**Then extend it.** `backup_to_gcp.py`'s `TARGETS` currently covers only
-`ComfyUI/models/loras/`, `/content/logs/`, and `agent_notes/` (KI-20) — none
-of which is where `joint.py`'s output lands. Before kicking off §5, add a
-fourth target for wherever `joint.py`'s output path resolves to (§5.3 pins
-the literal command); this is a one-line addition to `TARGETS`, not a new
-script. **Do not start the 3000-step run until this is in place** — the whole
-point of today's backup-policy update was to not repeat "no GCS protection
-on the one output that mattered."
+`--run-name` is required; this run's artifacts land in the generic project root
+at `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/`,
+while the session 6-7 planner backup stays separate at
+`.../YuE2-3B_Finetuning/maqam_planner_v1/`. Iterate on `--run-name` per run
+(the root is fixed, so multiple sessions in a day just get their own folders);
+`dataset/`, `track4_ab/`, `fine_tuning_ai_music_lora/` are reserved names.
 
-### 2.3 Environment: expect a second, separate environment
+**Target added.** `backup_to_gcp.py`'s `TARGETS` now also covers
+`/workspace/tok/full` (remote subfolder `head_calib`) — the one `joint.py`
+writes its checkpoints, `train.log`, and `listen_real/` render into (§5.3).
+The other three remain `ComfyUI/models/loras/`, `/content/logs/`,
+`agent_notes/` (KI-20).
+
+### 2.3 Environment: separate venv + Mothersuperior's layout (done)
 
 Mothersuperior's scripts want their own stack: Python 3.12 venv,
 `yue2-infer` @ commit `92a73cc7`, torch 2.10 + cu128, torchaudio 2.10,
-transformers, soundfile, scipy, safetensors, demucs. This may not match the
-pinned versions `bootstrap/setup.sh` installs for `ComfyUI-YuE2-Trainer`.
-**Build this in a separate venv**, not inside the existing ComfyUI Python
-environment, so a version mismatch here can't break the working planner
-trainer:
+transformers, soundfile, scipy, safetensors, demucs. Keep it out of the ComfyUI
+Python env. `python3.12 -m venv` fails here (no `ensurepip`, and
+`python3.12-venv` isn't installable), so use **uv** (installed):
 
 ```bash
 cd /content
-python3.12 -m venv ms_calib_venv
-source ms_calib_venv/bin/activate
-pip install torch==2.10.* torchaudio==2.10.* --index-url https://download.pytorch.org/whl/cu128
-pip install transformers soundfile scipy safetensors demucs
-pip install "git+https://github.com/multimodal-art-projection/YuE.git@92a73cc7"
+uv venv --python 3.12 ms_calib_venv
+uv pip install --python /content/ms_calib_venv/bin/python \
+  torch==2.10.* torchaudio==2.10.* --index-url https://download.pytorch.org/whl/cu128
+uv pip install --python /content/ms_calib_venv/bin/python transformers soundfile scipy safetensors demucs
+uv pip install --python /content/ms_calib_venv/bin/python \
+  "git+https://github.com/multimodal-art-projection/YuE.git@92a73cc7"
 ```
 
-Confirm `HF_HOME` already has (or can fetch) `m-a-p/YuE2-3B`, `m-a-p/YuE2-Vae`,
-`m-a-p/MERT-v2-FullSong` — these are large; reuse whatever's already cached
-from the existing bootstrap rather than re-downloading if paths line up.
+Models `m-a-p/YuE2-3B`, `m-a-p/YuE2-Vae`, `m-a-p/MERT-v2-FullSong` are cached
+under `/workspace/hf` (set `HF_HOME`).
 
-Fetch Mothersuperior's scripts + weights + regularizer pack:
+The scripts hard-code `/workspace/...`, so recreate that layout with symlinks
+onto `/content`:
+
+```bash
+mkdir -p /workspace/tok/full/listen_real /workspace/real/prep /content/ms_calib/hf
+ln -sfn /content/ms_calib/corpus /workspace/real/artist
+ln -sfn /content/ms_calib/hf /workspace/hf
+```
+
+Fetch scripts + weights:
 
 ```bash
 mkdir -p /content/ms_calib && cd /content/ms_calib
+hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 --local-dir . --include "scripts/*"
 hf download Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 \
-  --local-dir . --include "scripts/*" "tokenizer_head_joint_v4.pt" "nar_lora_joint_v4.pt"
-hf download Mothersuperior/yue2-minted-corpus regularizer/minted_regularizer_pack.pt \
-  --local-dir .
+  tokenizer_head_joint_v4.pt nar_lora_joint_v4.pt --local-dir .
 ```
 
-**Read the scripts before running them.** The model card gives one example
-invocation for `joint.py` with five positional args (`joint_mine 3000 1 1
-tokenizer_head_joint_v4.pt nar_lora_joint_v4.pt`) and no flag documentation.
-Do not guess at what `1 1` means — read the argparse block in
-`scripts/joint.py` before running for real, and paste anything ambiguous
-into `agent_notes/current.md` rather than assuming.
+**Blocker that forced a patch:** `joint.py` can **not** run as shipped. It
+loads `{W}/sem_nbr_idx.npy` + `{W}/sem_nbr_cos.npy` unconditionally and reads
+`{W}/feats/*.npy` + `/workspace/yue2-corpus/tracks/<pid>/*` for its *minted
+regularizer* side. Those are not released: `sem_nbr_*` has no generator
+anywhere, `feats/` needs the full 4,732-song minted corpus plus a MERT GPU
+pass, and the released `minted_regularizer_pack.pt` is consumed by
+`ar_prep.py`, not `joint.py`. We patched `/content/ms_calib/scripts/joint.py`
+to make the minted side optional — `MINTED=0` (or missing `feats`/`sem_nbr_*`)
+runs head+NAR on the real audio alone and prints `minted regularizer OFF`.
+`LR_HEAD`/`LR_LORA`/`LR_IO` are now env-overridable.
 
-Also: **paths are hard-coded to Mothersuperior's own pod layout**
-(`/workspace/tok/full`, `/workspace/real/...`, `/workspace/yue2-corpus/tracks`,
-`/workspace/real/ar/dataset.pt`). Either recreate that layout under `/content`
-with symlinks, or edit the path constants at the top of each script — check
-which before running `prep_real.py`.
+**Script facts (read, not guessed):** `joint.py <name> <steps> <train_head
+0|1> <train_lora 0|1> <init_head> <init_lora|none> [rank]` — the model card's
+`3000 1 1` means 3000 steps, train head, train NAR LoRA. `HOLD_TRACK` is
+compared to the **prep directory name** (= flac basename, no extension), not a
+title (§4). `joint.py` reads only `mert.npy`/`lat.npy`/`prefix.npy` from prep,
+so `cursor_prep.py` is **not** part of this run (§5.2).
+
+Re-downloading the scripts gives the **unpatched** `joint.py`; re-apply our
+edit (see `docs/architecture.md` → VM/GPU switch):
+
+```bash
+cd /content/ms_calib && git apply /content/yue2_lora_finetuning/bootstrap/joint_minted_optional.patch
+```
+
+### 2.4 Restore after a VM / GPU switch (or VM loss)
+
+Switching GPU or losing the VM wipes `/content` and `/workspace`; only GitHub +
+GCS survive. A fresh session should read `context.md` first, then:
+
+```bash
+# 1. re-clone the repo and redo §2.3 (uv venv, models, /workspace symlinks,
+#    scripts + weights), then re-apply the patch:
+cd /content/ms_calib && git apply /content/yue2_lora_finetuning/bootstrap/joint_minted_optional.patch
+
+# 2. rebuild the corpus from the backed-up dataset, then run §3:
+gsutil -m cp -r gs://akbar-december-2024-backup/YuE2-3B_Finetuning/dataset /content/data/dataset
+
+# 3. if prep is backed up (KI-27), restore it and skip prep_real.py:
+mkdir -p /workspace/real/prep
+gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/prep/*" /workspace/real/prep/ 2>/dev/null \
+  || echo "prep not backed up yet -> rerun prep_real.py (§5.1)"
+
+# 4. restore joint checkpoints/render if resuming:
+mkdir -p /workspace/tok/full
+gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/maqamverse_calib_v1" /workspace/tok/full/
+gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/listen_real" /workspace/tok/full/
+
+# 5. relaunch §5.3 with the same --run-name.
+```
+
+Keep the same `--run-name` so a resumed run stays in one GCS prefix (the daemon
+appends; the `run_manifest.json` must match). Note `joint.py` still has no
+resume flag (KI-26): a restored `head_last.pt` must be passed as `INIT_HEAD`
+for a continuation run, which restarts the LR schedule.
 
 ## 3. Convert the dataset to Mothersuperior's expected format
 
@@ -153,12 +207,12 @@ not identical:
 
 - **Audio:** mp3 → flac, lossless re-encode is fine here (mp3 is already
   lossy; flac just satisfies their loader, it doesn't recover quality).
-- **Lyrics:** spot-check tag compatibility. Our sample
-  (`hijaz_0049_05_take01.lyrics.txt`) uses `[Intro]`, `[Verse 1]`, `[Chorus]`,
-  `[Verse 2]`, `[Outro]` — Mothersuperior's doc examples use lowercase
-  `[verse]/[chorus]/[bridge]`. Check `cursor_prep.py`'s tag parser before
-  assuming case/numbering doesn't matter; normalize only if the parser
-  actually requires it.
+- **Lyrics:** all 256 tracks use TitleCase/numbered tags (`[Intro]`,
+  `[Chorus]`, `[Verse 1]`, `[Bridge]`, `[Refrain]`). `cursor_prep.py` skips any
+  line matching `^\s*\[.*\]\s*$` wholesale, so tag case/numbering is a
+  non-issue for `joint.py` (which doesn't read cursors anyway). Only the AR
+  cursor stage would care — and its `words_of` keeps `[a-z']` only, so it
+  cannot align Arabic at all.
 - **Style caption:** needs a **trigger phrase** prefix (their example:
   `"xyzq, in the style of xyzq. <description>"`). This corpus doesn't have an
   existing single-artist trigger since it spans four maqams under one target
@@ -178,74 +232,80 @@ python scripts/export_mothersuperior_format.py \
   --trigger-phrase "maqamverse, in the style of maqamverse."
 ```
 
-(New script — doesn't exist yet. Spec: walk `train/` + `val/`, for each
-`<name>.mp3` write `<out-root>/<name>.flac` via ffmpeg, `<name>.lyrics.txt`
-copied as-is, `<name>.txt` = trigger phrase + `.style.txt` content. Log any
-tag mismatches found while checking the lyrics point above; don't silently
-normalize.)
+(`scripts/export_mothersuperior_format.py`, committed — run for real: 256
+tracks, 0 failures, ~13 GB at `/content/ms_calib/corpus`. It logs section-tag
+counts and does not normalize them.)
 
 ## 4. HOLD_TRACK
 
-Reuse the existing audition track for continuity with the base/30/60/100
-comparison you already have opinions on:
+`joint.py` matches `HOLD_TRACK` against the prep directory name, which
+`prep_real.py` sets to the flac basename (no extension). The audition track's
+Arabic title (`04-تأمل-محاسن-الحبيبة-والجمال-المترف`, drifted from the old
+note's `04-وصف-...`) maps via the dataset manifest to a slugged filename:
 
 ```
-HOLD_TRACK=04-وصف-محاسن-الحبيبة-والجمال
+HOLD_TRACK=nahawand_0111_04_take01
 ```
 
-Confirm the exact converted filename in `/content/ms_calib/corpus/` matches
-this before passing it to `joint.py` — the raw corpus manifest and the final
-dataset filenames aren't guaranteed identical (KI-01/KI-07 territory).
+(`nahawand_0111_04_take01.flac` is in `/content/ms_calib/corpus/` — Nahawand,
+train split, single take. The other محاسن row is a different poem,
+`nahawand_0095_01_take01`.) If unset, `joint.py` silently holds out the first
+track, so set it explicitly for continuity with the base/30/60/100 audition.
 
 ## 5. Run the calibration
 
 ### 5.1 Feature + latent prep
 
+`prep_real.py` takes no arguments — it reads `/workspace/real/artist/*.flac`
+(symlinked to the corpus) and writes `/workspace/real/prep/<name>/{mert,lat,prefix}.npy`.
+
 ```bash
-cd /content/ms_calib
-source /content/ms_calib_venv/bin/activate
-python scripts/prep_real.py \
-  --corpus /content/ms_calib/corpus \
+export HF_HOME=/workspace/hf
+/content/ms_calib_venv/bin/python /content/ms_calib/scripts/prep_real.py \
   2>&1 | tee -a /content/logs/ms_prep_real.log
 ```
 
-(Flags unconfirmed — check `prep_real.py --help` or its argparse block; the
-model card gives the script name only, not its CLI surface.)
+GPU: MERT-v2 + VAE over 256 tracks — check `nvidia-smi` is idle first.
 
-### 5.2 Vocal stem + forced alignment
+### 5.2 Vocal stem + forced alignment — SKIP
 
-```bash
-python scripts/cursor_prep.py \
-  --corpus /content/ms_calib/corpus \
-  2>&1 | tee -a /content/logs/ms_cursor_prep.log
-```
-
-This runs Demucs (vocal separation) then MMS forced alignment — CPU/GPU mixed
-load, check `nvidia-smi` doesn't collide with anything else running.
+Not needed: `joint.py` reads only `mert.npy`/`lat.npy`/`prefix.npy`. Cursors
+feed `ar_lora_cursor.py` only, and `cursor_prep.py` can't align Arabic anyway.
+Skip unless/until the AR cursor stage is run.
 
 ### 5.3 The calibration run itself
 
 ```bash
-HOLD_TRACK=04-وصف-محاسن-الحبيبة-والجمال \
-  python scripts/joint.py \
+export HF_HOME=/workspace/hf
+cd /content/ms_calib/scripts
+MINTED=0 HOLD_TRACK=nahawand_0111_04_take01 \
+  /content/ms_calib_venv/bin/python joint.py \
   maqamverse_calib_v1 3000 1 1 \
   /content/ms_calib/tokenizer_head_joint_v4.pt \
   /content/ms_calib/nar_lora_joint_v4.pt \
   2>&1 | tee -a /content/logs/ms_joint.log
 ```
 
-Wherever this run's output actually lands (confirm from reading the script,
-per §2.3) is what needs to be added to `backup_to_gcp.py`'s `TARGETS` per
-§2.2, before this command runs — not after.
+Outputs to `/workspace/tok/full/maqamverse_calib_v1/{head,lora}_{best,last}.pt`
++ `train.log`, and the round-trip render to
+`/workspace/tok/full/listen_real/real_pred_maqamverse_calib_v1.flac`. That
+`/workspace/tok/full` path is in `backup_to_gcp.py`'s `TARGETS` as
+`head_calib` (§2.2).
+
+Start at default LRs; if `real_repeat` climbs toward 1.0 (§6), stop and rerun
+with a lower `LR_HEAD` (and/or fewer steps) — with the minted regularizer off
+there is no anti-collapse term.
 
 ## 6. What to watch, and the stop/verify signals
 
 - **First 20–30 steps:** confirm VRAM (§2.1) and extrapolate total runtime.
   Report both back before letting it run unattended for hours.
-- **`minted_val` held-out loss** (the 5%-by-hash held-out slice baked into
-  the regularizer pack) should stay flat — that's the "a small artist set
-  didn't collapse the token grammar" check, same spirit as KI-03's held-out
-  eval on the planner side. Rising `minted_val` loss is a stop signal.
+- **`real_repeat` is the collapse monitor now that `MINTED=0`.** The eval line
+  prints `real_nar` (held-out flow loss, lower is better — this selects
+  `best`) and `real_repeat` (fraction of adjacent identical predicted tokens).
+  A `real_repeat` climbing toward 1.0 means the head collapsed: stop and rerun
+  with a lower `LR_HEAD`. `minted_top1` prints `nan` by design (no
+  regularizer).
 - **HOLD_TRACK round-trip render, done twice** — once with the stock head,
   once with the calibrated checkpoint, same seed, same prompt — is the actual
   verification, not the training loss curve alone. Loss tells you the head

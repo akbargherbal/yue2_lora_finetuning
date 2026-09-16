@@ -300,19 +300,50 @@ or resume training.
 
 ### GCS backup — `backup_to_gcp.py`
 
-Run in a second terminal next to training. Every 25 min it mirrors to
-`gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/` with
+Run in a second terminal next to training. Every 25 min it mirrors to a
+**per-run** folder under one generic root,
+`gs://akbar-december-2024-backup/YuE2-3B_Finetuning/<run-name>/`, with
 `gsutil -m rsync -r`:
 
 | local | remote | why |
 |---|---|---|
-| `ComfyUI/models/loras/` | `run_backup/loras/` | `.safetensors`, `.resume`, `.loss.json` |
-| `/content/logs/` | `run_backup/logs/` | `train.log` for crash diagnosis |
-| `agent_notes/` | `run_backup/agent_notes/` | plans + exact commands |
+| `ComfyUI/models/loras/` | `<run>/loras/` | `.safetensors`, `.resume`, `.loss.json` |
+| `/content/logs/` | `<run>/logs/` | `train.log` for crash diagnosis |
+| `agent_notes/` | `<run>/agent_notes/` | plans + exact commands |
 
-Append/update only (no `-d`, never deletes remotely); a `--settle-seconds 60`
-guard avoids grabbing a file mid-write. Renders/prompts/scripts were uploaded
-by hand (KI-20). Needs `gcloud`/`gsutil` auth to stay valid.
+`--run-name` is required, and a `run_manifest.json` at the run folder's root
+records the run name, timestamp, and target list so a folder identifies itself.
+The root is fixed (no dated parents accumulating per session) and also holds
+the non-run folders `dataset/`, `track4_ab/`, `fine_tuning_ai_music_lora/`;
+those names are reserved. The session 6-7 planner backup now lives at
+`YuE2-3B_Finetuning/maqam_planner_v1/`, and a new run can never overwrite a
+prior run's artifacts. Append/update only (no `-d`, never deletes remotely); a
+`--settle-seconds 60` guard avoids grabbing a file mid-write. Renders/prompts/
+scripts are uploaded by hand (KI-20). Needs `gcloud`/`gsutil` auth to stay
+valid.
+
+### VM / GPU switch — restore procedure
+
+Colab does not move a runtime between GPUs. Switching (L4→A100), or losing the
+VM, wipes **local disk** — `/content` and `/workspace`, including the repo
+working tree and the whole Mothersuperior toolchain. Only GCS survives, so a
+switch is *restore, then resume*, guided by `PLAN.md` §2.4. What must survive
+lives in exactly two places:
+
+- **GitHub** (`akbargherbal/yue2_lora_finetuning`) — the docs, scripts, tests,
+  and `bootstrap/joint_minted_optional.patch`. A fresh VM re-clones it. If
+  today's changes weren't committed, they are gone.
+- **GCS** `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/` —
+  `dataset/` (built corpus, restorable) and per-run
+  `<run-name>/{loras,logs,agent_notes,head_calib}/`. The `run_manifest.json` at
+  each run prefix names it. `agent_notes/current.md` is scratch; `context.md`
+  and this file are the durable state.
+
+Everything else is rebuilt, in minutes: venv (`uv`), HF models (re-download),
+corpus (`export_mothersuperior_format.py` from the GCS dataset), and the
+patched `joint.py` (re-download + `git apply` the patch). The one expensive
+local artifact is `/workspace/real/prep` (~25 GPU-min) — its backup target is
+**not yet added** (KI-27), so until it is, a switch forces `prep_real.py` again.
 
 ### Evaluation — audio, not loss
 
@@ -343,9 +374,11 @@ by hand (KI-20). Needs `gcloud`/`gsutil` auth to stay valid.
 | `maqam_prompt_generator.py` | Suno prompt template (user's tool) |
 | `audition_planner.py` | render style+lyrics through the ComfyUI graph, base or planner LoRA |
 | `render_tokens_nar.py` | render a `.semantic.npy`, optionally fold in the NAR companion |
+| `scripts/export_mothersuperior_format.py` | dataset → Mothersuperior's flat `.flac`/`.lyrics.txt`/`.txt` corpus (head calibration, `PLAN.md` §3) |
 | `backup_to_gcp.py` | periodic GCS mirror of run artifacts |
 | `bootstrap/setup.sh` | Colab bootstrap (pinned clones, downloads, patch) |
 | `bootstrap/yue2_cfg_scale.patch` | wires `cfg_scale` into the YuE2 nodes |
+| `bootstrap/joint_minted_optional.patch` | makes Mothersuperior's `joint.py` minted regularizer optional (`MINTED=0`), for the head calibration |
 | `tests/` | pytest suite + fixtures |
 | `docs/archive/` | historical process artifacts (e.g. the 2026-09 quality review) |
 
