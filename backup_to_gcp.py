@@ -43,6 +43,7 @@ DEFAULT_BASE = f"{BUCKET}/YuE2-3B_Finetuning"
 RESERVED_SUBFOLDERS = {"dataset", "track4_ab", "fine_tuning_ai_music_lora"}
 DEFAULT_LOG = Path("/content/logs/gcp_backup.log")
 
+CACHE_DIR = REPO_ROOT / "ComfyUI" / "custom_nodes" / "ComfyUI-YuE2-Trainer" / "cache"
 
 # (source folder, remote subfolder, wait for writes to settle before syncing)
 TARGETS = [
@@ -56,8 +57,10 @@ TARGETS = [
     # GPU prep for the calibration (PLAN.md §5.1): MERT features + VAE latents
     # + prompt prefixes, ~25 min to regenerate. Skipped when absent.
     (Path("/workspace/real/prep"), "prep", False),
+    # Stage-1 tokenize cache (VAE latents + semantic tokens). Losing it forces a
+    # full re-tokenize (KI-30); append/update-only, so steady-state is cheap.
+    (CACHE_DIR, "cache", False),
 ]
-CACHE_DIR = REPO_ROOT / "ComfyUI" / "custom_nodes" / "ComfyUI-YuE2-Trainer" / "cache"
 DEFAULT_EXCLUDES = [r".*\.tmp$", r".*put_loras_here$", r".*put_checkpoints_here$"]
 
 
@@ -71,7 +74,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--once", action="store_true", help="Run one pass and exit (for cron).")
     p.add_argument("--dry-run", action="store_true", help="Log the sync commands but upload nothing.")
     p.add_argument("--include-cache", action="store_true",
-                   help="Also mirror the VAE latent cache (large; regenerable, but saves the ~20 min encode).")
+                   help="Deprecated no-op: the tokenize cache is now always mirrored (KI-30).")
     p.add_argument("--settle-seconds", type=float, default=60.0,
                    help="For checkpoint folders, wait until the newest file is this old before syncing (default: 60).")
     p.add_argument("--gsutil", default="gsutil", help="gsutil executable to use.")
@@ -188,8 +191,6 @@ def main() -> int:
     prefix = f"{args.base.rstrip('/')}/{args.run_name}"
 
     targets = list(TARGETS)
-    if args.include_cache:
-        targets.append((CACHE_DIR, "latent_cache", False))
 
     logger.info("backup run %r to %s/%s every %.0f min (once=%s, dry-run=%s)",
                 args.run_name, args.base.rstrip("/"), args.run_name, args.interval_minutes,

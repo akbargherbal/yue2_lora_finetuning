@@ -16,6 +16,56 @@
 > and is not the planner's bottleneck (KI-29). Keep this file for reproduction;
 > the live direction is planner-side (the KL climb, KI-03) — see `context.md`.
 
+## Current plan — planner re-run with a stronger KL
+
+The tokenizer was exonerated (KI-29); the planner's KL climbed (KI-03) and more
+steps made the ear verdict worse. So: re-tokenize with the **stock** head, then
+retrain the planner with a **higher `--kl-weight`** and dense checkpoints, and
+pick a checkpoint by ear. Run with `HF_HOME=/workspace/hf` (MERT lives there).
+
+### P1. Re-tokenize the corpus (Stage 1; the cache is gone, KI-30)
+
+```bash
+cd /content/yue2_lora_finetuning
+HF_HOME=/workspace/hf python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --semantic-head tokenizer_head_joint_v4.pt \
+  --semantic --no-abc \
+  --eval-holdout 5 --seed 2002 \
+  --steps 100 --out maqam_planner_v2 --dry-run 2>&1 | tee -a /content/logs/train.log
+```
+
+(`--dry-run` populates the token cache + VAE latents and writes an untrained
+0-step LoRA — ignore that artifact, KI-18.)
+
+### P2. Planner LoRA, `--kl-weight 1.0`
+
+Same as session 7 except the KL weight (0.5 → 1.0), more steps to test whether a
+stronger trust region keeps improving instead of drifting, and dense saves:
+
+```bash
+cd /content/yue2_lora_finetuning
+HF_HOME=/workspace/hf python ComfyUI/custom_nodes/ComfyUI-YuE2-Trainer/train_cli.py planner \
+  --comfy-root /content/yue2_lora_finetuning/ComfyUI \
+  --checkpoint yue2_3b_bf16.safetensors \
+  --data /content/data/dataset \
+  --semantic-head tokenizer_head_joint_v4.pt \
+  --semantic --no-abc --abc-dropout 0.5 --kl-weight 1.0 \
+  --max-tokens 4096 \
+  --rank 32 --alpha 32 --lr 5e-5 --lr-schedule cosine \
+  --steps 200 --save-every 10 --eval-every 10 \
+  --eval-holdout 5 --eval-samples 8 --seed 2002 \
+  --probe-every 10 --probe-max-tokens 8192 \
+  --out maqam_planner_v2 2>&1 | tee -a /content/logs/train.log
+```
+
+Watch: `kl` should level at a few hundredths, not climb; pick by ear (step 30
+was best last time). If KL still climbs at 1.0, raise to 2.0 or lower `--lr`.
+Start the backup daemon under this run's name first:
+`python backup_to_gcp.py --run-name maqam_planner_v2` (§2.2).
+
 ## 0. Where we are, and why this session exists
 
 - **Listening verdict on the track-4 A/B is in (resolves KI-21):** base vs
