@@ -335,15 +335,16 @@ lives in exactly two places:
   today's changes weren't committed, they are gone.
 - **GCS** `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/` —
   `dataset/` (built corpus, restorable) and per-run
-  `<run-name>/{loras,logs,agent_notes,head_calib}/`. The `run_manifest.json` at
-  each run prefix names it. `agent_notes/current.md` is scratch; `context.md`
-  and this file are the durable state.
+  `<run-name>/{loras,logs,agent_notes,head_calib,prep}/`. The
+  `run_manifest.json` at each run prefix names it. `agent_notes/current.md` is
+  scratch; `context.md` and this file are the durable state.
 
 Everything else is rebuilt, in minutes: venv (`uv`), HF models (re-download),
 corpus (`export_mothersuperior_format.py` from the GCS dataset), and the
 patched `joint.py` (re-download + `git apply` the patch). The one expensive
-local artifact is `/workspace/real/prep` (~25 GPU-min) — its backup target is
-**not yet added** (KI-27), so until it is, a switch forces `prep_real.py` again.
+local artifact is `/workspace/real/prep` (~25 GPU-min); it is mirrored as the
+run's `prep` target, so a switch restores it instead of re-running
+`prep_real.py`.
 
 ### Evaluation — audio, not loss
 

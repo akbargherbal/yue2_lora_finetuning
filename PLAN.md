@@ -180,10 +180,10 @@ cd /content/ms_calib && git apply /content/yue2_lora_finetuning/bootstrap/joint_
 # 2. rebuild the corpus from the backed-up dataset, then run §3:
 gsutil -m cp -r gs://akbar-december-2024-backup/YuE2-3B_Finetuning/dataset /content/data/dataset
 
-# 3. if prep is backed up (KI-27), restore it and skip prep_real.py:
+# 3. restore the GPU prep (backed up as TARGETS "prep") and skip prep_real.py:
 mkdir -p /workspace/real/prep
-gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/prep/*" /workspace/real/prep/ 2>/dev/null \
-  || echo "prep not backed up yet -> rerun prep_real.py (§5.1)"
+gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/prep/*" /workspace/real/prep/ 2>/dev/null \
+  || echo "prep not backed up -> rerun prep_real.py (§5.1)"
 
 # 4. restore joint checkpoints/render if resuming:
 mkdir -p /workspace/tok/full

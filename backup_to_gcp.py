@@ -53,6 +53,9 @@ TARGETS = [
     # checkpoints + train.log to {W}/<name> and the round-trip render to
     # {W}/listen_real, where W=/workspace/tok/full. Skipped when absent.
     (Path("/workspace/tok/full"), "head_calib", False),
+    # GPU prep for the calibration (PLAN.md §5.1): MERT features + VAE latents
+    # + prompt prefixes, ~25 min to regenerate. Skipped when absent.
+    (Path("/workspace/real/prep"), "prep", False),
 ]
 CACHE_DIR = REPO_ROOT / "ComfyUI" / "custom_nodes" / "ComfyUI-YuE2-Trainer" / "cache"
 DEFAULT_EXCLUDES = [r".*\.tmp$", r".*put_loras_here$", r".*put_checkpoints_here$"]
