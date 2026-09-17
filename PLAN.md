@@ -154,7 +154,7 @@ nohup python backup_to_gcp.py --run-name maqamverse_calib_v1 \
 ```
 
 `--run-name` is required; this run's artifacts land in the generic project root
-at `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/`,
+at `$GCP_BACKUP_BASE/maqamverse_calib_v1/`,
 while the session 6-7 planner backup stays separate at
 `.../YuE2-3B_Finetuning/maqam_planner_v1/`. Iterate on `--run-name` per run
 (the root is fixed, so multiple sessions in a day just get their own folders);
@@ -237,17 +237,17 @@ GCS survive. A fresh session should read `context.md` first, then:
 cd /content/ms_calib && git apply /content/yue2_lora_finetuning/bootstrap/joint_minted_optional.patch
 
 # 2. rebuild the corpus from the backed-up dataset, then run §3:
-gsutil -m cp -r gs://akbar-december-2024-backup/YuE2-3B_Finetuning/dataset /content/data/dataset
+gsutil -m cp -r "$GCP_BACKUP_BASE/dataset" /content/data/dataset
 
 # 3. restore the GPU prep (backed up as TARGETS "prep") and skip prep_real.py:
 mkdir -p /workspace/real/prep
-gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/prep/*" /workspace/real/prep/ 2>/dev/null \
+gsutil -m cp -r "$GCP_BACKUP_BASE/maqamverse_calib_v1/prep/*" /workspace/real/prep/ 2>/dev/null \
   || echo "prep not backed up -> rerun prep_real.py (§5.1)"
 
 # 4. restore joint checkpoints/render if resuming:
 mkdir -p /workspace/tok/full
-gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/maqamverse_calib_v1" /workspace/tok/full/
-gsutil -m cp -r "gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqamverse_calib_v1/head_calib/listen_real" /workspace/tok/full/
+gsutil -m cp -r "$GCP_BACKUP_BASE/maqamverse_calib_v1/head_calib/maqamverse_calib_v1" /workspace/tok/full/
+gsutil -m cp -r "$GCP_BACKUP_BASE/maqamverse_calib_v1/head_calib/listen_real" /workspace/tok/full/
 
 # 5. relaunch §5.3 with the same --run-name.
 ```

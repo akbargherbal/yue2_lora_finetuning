@@ -60,7 +60,7 @@ patch won't apply.
 
 ## Artifacts (durable copies in GCS)
 
-`gs://akbar-december-2024-backup/YuE2-3B_13092026/run_backup/`:
+`gs://<bucket>/YuE2-3B_13092026/run_backup/`:
 `loras/` (all planner checkpoints + final + `.resume` + `loss.json` + probes),
 `track4/` (the base-vs-LoRA A/B), `roundtrip/` (tokenizer round-trip + NAR
 A/B), `prompts/`, `repo/` (helper scripts, patch, PLAN), `logs/`,

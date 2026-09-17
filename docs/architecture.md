@@ -302,7 +302,7 @@ or resume training.
 
 Run in a second terminal next to training. Every 25 min it mirrors to a
 **per-run** folder under one generic root,
-`gs://akbar-december-2024-backup/YuE2-3B_Finetuning/<run-name>/`, with
+`$GCP_BACKUP_BASE/<run-name>/`, with
 `gsutil -m rsync -r`:
 
 | local | remote | why |
@@ -333,7 +333,7 @@ lives in exactly two places:
 - **GitHub** (`akbargherbal/yue2_lora_finetuning`) — the docs, scripts, tests,
   and `bootstrap/joint_minted_optional.patch`. A fresh VM re-clones it. If
   today's changes weren't committed, they are gone.
-- **GCS** `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/` —
+- **GCS** (`$GCP_BACKUP_BASE`) —
   `dataset/` (built corpus, restorable) and per-run
   `<run-name>/{loras,logs,agent_notes,head_calib,prep,cache}/`. The
   `run_manifest.json` at each run prefix names it. `agent_notes/current.md` is

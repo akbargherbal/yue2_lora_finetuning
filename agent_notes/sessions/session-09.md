@@ -82,7 +82,7 @@ style — and where does it break? Same prompt + seed across all five, so every
 difference is the LoRA alone.
 
 **Files** (identical locally and in
-`gs://akbar-december-2024-backup/YuE2-3B_Finetuning/maqam_planner_v2/renders_unseen/`;
+`$GCP_BACKUP_BASE/maqam_planner_v2/renders_unseen/`;
 local dir `ComfyUI/output/yue2/`):
 
 | what | file |

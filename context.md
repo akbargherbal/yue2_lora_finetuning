@@ -19,7 +19,7 @@ elsewhere:
 > `PLAN.md` §2.4 for restore commands (re-clone, re-apply
 > `bootstrap/joint_minted_optional.patch`, rebuild corpus/venv/models, restore
 > prep + checkpoints from GCS). GCS root:
-> `gs://akbar-december-2024-backup/YuE2-3B_Finetuning/`; the calibration run
+> `$GCP_BACKUP_BASE`; the calibration run
 > `maqamverse_calib_v1/` and the planner run `maqam_planner_v2/` are done, and
 > the latter awaits an ear verdict on `maqam_planner_v2/renders_unseen/`.
 > `agent_notes/current.md` is per-turn scratch — this file and `PLAN.md` are the

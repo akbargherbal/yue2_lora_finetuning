@@ -29,6 +29,7 @@ import argparse
 import datetime as dt
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -36,10 +37,12 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
-BUCKET = "gs://akbar-december-2024-backup"
-# One generic root for the whole project; each run gets a subfolder under it.
-DEFAULT_BASE = f"{BUCKET}/YuE2-3B_Finetuning"
-# Non-run folders that already live under DEFAULT_BASE; never use as a run name.
+# The GCS base is supplied at runtime, like the API keys: the launching
+# notebook exports GCP_BACKUP_BASE, so no bucket- or account-specific value is
+# stored in this repo. Override per invocation with --base. Format:
+# gs://<bucket>/<project-prefix>.
+DEFAULT_BASE = os.environ.get("GCP_BACKUP_BASE", "")
+# Non-run folders that already live under the base; never use as a run name.
 RESERVED_SUBFOLDERS = {"dataset", "track4_ab", "fine_tuning_ai_music_lora"}
 DEFAULT_LOG = Path("/content/logs/gcp_backup.log")
 
@@ -68,8 +71,10 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--run-name", required=True,
                    help="This run's subfolder under <base> (e.g. maqamverse_calib_v1).")
-    p.add_argument("--base", default=DEFAULT_BASE,
-                   help=f"GCS root to mirror into (default: {DEFAULT_BASE}).")
+    p.add_argument("--base", default=None,
+                   help="GCS root to mirror into (gs://<bucket>/<project-prefix>). "
+                        "Defaults to $GCP_BACKUP_BASE, which the launching notebook "
+                        "exports; it is required if that is unset.")
     p.add_argument("--interval-minutes", type=float, default=25.0, help="Minutes between passes (default: 25)")
     p.add_argument("--once", action="store_true", help="Run one pass and exit (for cron).")
     p.add_argument("--dry-run", action="store_true", help="Log the sync commands but upload nothing.")
@@ -183,12 +188,18 @@ def main() -> int:
         return 2
     args.gsutil = gsutil
 
-    if args.run_name in RESERVED_SUBFOLDERS:
-        logger.error("%r is a reserved non-run folder under %s; pick another run name.",
-                     args.run_name, DEFAULT_BASE)
+    args.base = (args.base or DEFAULT_BASE).rstrip("/")
+    if not args.base:
+        logger.error("no GCS base: pass --base or set GCP_BACKUP_BASE "
+                     "(the launching notebook exports it)")
         return 3
 
-    prefix = f"{args.base.rstrip('/')}/{args.run_name}"
+    if args.run_name in RESERVED_SUBFOLDERS:
+        logger.error("%r is a reserved non-run folder under %s; pick another run name.",
+                     args.run_name, args.base)
+        return 3
+
+    prefix = f"{args.base}/{args.run_name}"
 
     targets = list(TARGETS)
 
